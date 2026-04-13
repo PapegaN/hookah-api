@@ -22,7 +22,7 @@ export class HealthController {
       service: 'hookah-api',
       version: process.env.npm_package_version ?? '0.1.0',
       timestamp: new Date().toISOString(),
-      boundedContexts: ['catalog', 'inventory', 'orders'],
+      boundedContexts: ['auth', 'catalog', 'equipment', 'orders', 'recipes'],
     };
   }
 }

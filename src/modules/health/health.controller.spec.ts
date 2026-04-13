@@ -17,6 +17,6 @@ describe('HealthController', () => {
 
     expect(response.status).toBe('ok');
     expect(response.service).toBe('hookah-api');
-    expect(response.boundedContexts).toContain('inventory');
+    expect(response.boundedContexts).toContain('recipes');
   });
 });
