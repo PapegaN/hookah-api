@@ -11,7 +11,7 @@ import type { AuthenticatedRequest } from '../auth.types';
 export class DemoAuthGuard implements CanActivate {
   constructor(private readonly demoAuthService: DemoAuthService) {}
 
-  canActivate(context: ExecutionContext): boolean {
+  async canActivate(context: ExecutionContext): Promise<boolean> {
     const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
     const authorizationHeader = request.headers.authorization;
 
@@ -20,7 +20,7 @@ export class DemoAuthGuard implements CanActivate {
     }
 
     const accessToken = authorizationHeader.slice(7).trim();
-    const user = this.demoAuthService.getUserByToken(accessToken);
+    const user = await this.demoAuthService.getUserByToken(accessToken);
 
     if (!user) {
       throw new UnauthorizedException('Access token is invalid');

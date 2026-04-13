@@ -5,6 +5,7 @@ import { HealthModule } from './modules/health/health.module';
 import { OrdersModule } from './modules/orders/orders.module';
 import { PlatformModule } from './modules/platform/platform.module';
 import { ReferencesModule } from './modules/references/references.module';
+import { SettingsModule } from './modules/settings/settings.module';
 import { UsersModule } from './modules/users/users.module';
 
 @Module({
@@ -19,6 +20,7 @@ import { UsersModule } from './modules/users/users.module';
     UsersModule,
     ReferencesModule,
     OrdersModule,
+    SettingsModule,
   ],
 })
 export class AppModule {}

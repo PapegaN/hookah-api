@@ -19,13 +19,13 @@ export class AuthController {
   @ApiOperation({
     summary: 'Войти в административную панель или клиентский кабинет',
   })
-  login(@Body() body: LoginDto) {
+  async login(@Body() body: LoginDto) {
     return this.demoAuthService.login(body.login, body.password);
   }
 
   @Post('register')
   @ApiOperation({ summary: 'Зарегистрировать нового клиента' })
-  register(@Body() body: RegisterDto) {
+  async register(@Body() body: RegisterDto) {
     return this.demoAuthService.register(body);
   }
 

@@ -22,8 +22,9 @@ export class DemoAuthService {
     });
   }
 
-  login(login: string, password: string): AuthResponse {
-    const storedUser = this.platformDataService.findStoredUserByLogin(login);
+  async login(login: string, password: string): Promise<AuthResponse> {
+    const storedUser =
+      await this.platformDataService.findStoredUserByLogin(login);
 
     if (
       !storedUser ||
@@ -35,13 +36,13 @@ export class DemoAuthService {
     return this.issueSession(storedUser.id);
   }
 
-  register(input: {
+  async register(input: {
     login: string;
     password: string;
     email?: string;
     telegramUsername?: string;
-  }): AuthResponse {
-    const createdUser = this.platformDataService.registerClient({
+  }): Promise<AuthResponse> {
+    const createdUser = await this.platformDataService.registerClient({
       login: input.login,
       passwordHash: this.hashPassword(input.password),
       email: input.email,
@@ -51,7 +52,7 @@ export class DemoAuthService {
     return this.issueSession(createdUser.id);
   }
 
-  createUserByAdmin(
+  async createUserByAdmin(
     actorUserId: string,
     input: {
       login: string;
@@ -61,7 +62,7 @@ export class DemoAuthService {
       telegramUsername?: string;
       isApproved?: boolean;
     },
-  ): AppUser {
+  ): Promise<AppUser> {
     return this.platformDataService.createUserByAdmin(actorUserId, {
       login: input.login,
       passwordHash: this.hashPassword(input.password),
@@ -72,11 +73,11 @@ export class DemoAuthService {
     });
   }
 
-  getUserByToken(token: string): AppUser | undefined {
+  async getUserByToken(token: string): Promise<AppUser | undefined> {
     const userId = this.sessions.get(token);
 
     return userId
-      ? this.platformDataService.findPublicUserById(userId)
+      ? await this.platformDataService.findPublicUserById(userId)
       : undefined;
   }
 
@@ -99,9 +100,9 @@ export class DemoAuthService {
     ];
   }
 
-  private issueSession(userId: string): AuthResponse {
+  private async issueSession(userId: string): Promise<AuthResponse> {
     const accessToken = randomUUID();
-    const user = this.platformDataService.findPublicUserById(userId);
+    const user = await this.platformDataService.findPublicUserById(userId);
 
     if (!user) {
       throw new UnauthorizedException('User session cannot be created');

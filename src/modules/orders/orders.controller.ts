@@ -34,20 +34,23 @@ export class OrdersController {
     summary:
       'Получить список заказов: все для администратора и мастера, только свои для клиента',
   })
-  listOrders(@CurrentUser() user: AppUser) {
+  async listOrders(@CurrentUser() user: AppUser) {
     return this.platformDataService.listOrdersForUser(user);
   }
 
   @Get(':id')
   @ApiOperation({ summary: 'Получить детальную карточку заказа' })
-  getOrder(@Param('id') id: string, @CurrentUser() user: AppUser) {
+  async getOrder(@Param('id') id: string, @CurrentUser() user: AppUser) {
     return this.platformDataService.getOrderById(id, user);
   }
 
   @Post()
   @Roles(UserRole.Client)
   @ApiOperation({ summary: 'Создать заказ от имени клиента' })
-  createOrder(@CurrentUser() user: AppUser, @Body() body: CreateOrderDto) {
+  async createOrder(
+    @CurrentUser() user: AppUser,
+    @Body() body: CreateOrderDto,
+  ) {
     return this.platformDataService.createOrder(user.id, body);
   }
 
@@ -57,7 +60,7 @@ export class OrdersController {
     summary:
       'Подтвердить, что клиент действительно находится за выбранным столом',
   })
-  approveParticipantTable(
+  async approveParticipantTable(
     @Param('id') id: string,
     @Param('clientUserId') clientUserId: string,
     @CurrentUser() user: AppUser,
@@ -72,7 +75,7 @@ export class OrdersController {
   @Patch(':id/start')
   @Roles(UserRole.Admin, UserRole.HookahMaster)
   @ApiOperation({ summary: 'Взять заказ в работу' })
-  startOrder(@Param('id') id: string, @CurrentUser() user: AppUser) {
+  async startOrder(@Param('id') id: string, @CurrentUser() user: AppUser) {
     return this.platformDataService.startOrder(id, user.id);
   }
 
@@ -81,7 +84,7 @@ export class OrdersController {
   @ApiOperation({
     summary: 'Заполнить фактическую забивку и отдать заказ клиенту',
   })
-  fulfillOrder(
+  async fulfillOrder(
     @Param('id') id: string,
     @CurrentUser() user: AppUser,
     @Body() body: FulfillOrderDto,
@@ -97,7 +100,7 @@ export class OrdersController {
   @ApiOperation({
     summary: 'Оценить кальян и оставить отзыв после выдачи заказа',
   })
-  submitFeedback(
+  async submitFeedback(
     @Param('id') id: string,
     @CurrentUser() user: AppUser,
     @Body() body: SubmitOrderFeedbackDto,

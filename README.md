@@ -1,11 +1,12 @@
 # hookah-api
 
-Backend API для будущей системы управления кальянной. Репозиторий отвечает за бизнес-логику, HTTP-контракт и подготовку к работе с PostgreSQL.
+Backend API для системы управления кальянной.
 
 ## Технологии
 
 - NestJS
 - TypeScript strict mode
+- PostgreSQL через `pg`
 - REST API
 - Swagger / OpenAPI
 - class-validator
@@ -13,15 +14,12 @@ Backend API для будущей системы управления калья
 - ESLint
 - Prettier
 
-## Базовая архитектура
+## Текущее состояние
 
-На старте backend разбивается на доменные контуры, которые дальше будут расти отдельными модулями:
-
-- `catalog` — бренды, линейки, вкусы и карточки табака;
-- `inventory` — партии, остатки и движения;
-- `orders` — заказы, позиции и жизненный цикл исполнения.
-
-В текущем коммите уже есть типизированный bootstrap приложения, глобальные пайпы, версионирование API и `health` endpoint как первый инфраструктурный модуль.
+- API работает в двух режимах: реальный PostgreSQL как основной источник данных и memory fallback для локальных сценариев без БД.
+- Пользователи, справочники, заказы, апрув и история статусов читаются и пишутся в PostgreSQL.
+- `health` endpoint показывает состояние подключения к базе.
+- Административные endpoints `/settings/*` позволяют экспортировать JSON-выгрузки и импортировать backup.
 
 ## Команды
 
@@ -29,32 +27,28 @@ Backend API для будущей системы управления калья
 npm install
 npm run start:dev
 npm run build
-npm run check
+npm run lint
 ```
 
-Swagger будет доступен по адресу `http://localhost:3000/api/docs`.
+Swagger доступен по адресу `http://localhost:3000/api/docs`.
 
 ## Docker
-
-Собрать и запустить только backend:
 
 ```bash
 docker build -t hookah-api .
 docker run --rm -p 3000:3000 -e PORT=3000 -e APP_ORIGIN=http://localhost:8080 -e DATABASE_URL=postgresql://hookah:hookah_local@host.docker.internal:5432/hookah hookah-api
 ```
 
-Для совместного запуска с frontend и PostgreSQL используйте корневой `compose.yaml` в главном репозитории.
+Для совместного запуска с frontend и PostgreSQL используйте корневой `compose.yaml`.
 
 ## Переменные окружения
-
-Скопируйте значения из `.env.example` и настройте:
 
 - `PORT`
 - `APP_ORIGIN`
 - `DATABASE_URL`
 
-## Ближайшие шаги
+## Следующие шаги
 
-- Подключить модуль конфигурации БД и слой доступа к данным.
-- Добавить DTO и CRUD для каталога табака.
-- Подготовить OpenAPI-контракт для генерации frontend-типов.
+- вынести SQL-операции в более узкие domain-repository слои;
+- добавить audit trail для административных изменений и импорта backup;
+- подготовить OpenAPI-контракт для последующей генерации frontend-типов.

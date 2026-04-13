@@ -37,7 +37,7 @@ export class UsersController {
   @ApiOperation({
     summary: 'Получить список пользователей для административной панели',
   })
-  listUsers() {
+  async listUsers() {
     return this.platformDataService.listUsers();
   }
 
@@ -45,13 +45,13 @@ export class UsersController {
   @ApiOperation({
     summary: 'Создать нового пользователя из административной панели',
   })
-  createUser(@CurrentUser() user: AppUser, @Body() body: CreateUserDto) {
+  async createUser(@CurrentUser() user: AppUser, @Body() body: CreateUserDto) {
     return this.demoAuthService.createUserByAdmin(user.id, body);
   }
 
   @Patch(':id')
   @ApiOperation({ summary: 'Обновить пользователя, роль и статус доступа' })
-  updateUser(
+  async updateUser(
     @Param('id') id: string,
     @CurrentUser() user: AppUser,
     @Body() body: UpdateUserDto,

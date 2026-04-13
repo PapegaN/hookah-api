@@ -30,14 +30,14 @@ export class ReferencesController {
     summary:
       'Получить все справочники для административной панели и конструктора заказа',
   })
-  getReferences() {
+  async getReferences() {
     return this.platformDataService.getReferencesSnapshot();
   }
 
   @Post(':entityType')
   @Roles(UserRole.Admin)
   @ApiOperation({ summary: 'Создать элемент справочника' })
-  createReference(
+  async createReference(
     @Param('entityType') entityType: ReferenceEntityType,
     @Body() body: UpsertReferenceItemDto,
   ) {
@@ -47,7 +47,7 @@ export class ReferencesController {
   @Patch(':entityType/:id')
   @Roles(UserRole.Admin)
   @ApiOperation({ summary: 'Обновить элемент справочника' })
-  updateReference(
+  async updateReference(
     @Param('entityType') entityType: ReferenceEntityType,
     @Param('id') id: string,
     @Body() body: UpsertReferenceItemDto,
