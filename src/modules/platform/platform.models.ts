@@ -11,6 +11,14 @@ export enum OrderStatus {
   Rated = 'rated',
 }
 
+export enum OrderTimelineEventType {
+  Created = 'created',
+  ParticipantJoined = 'participant_joined',
+  Started = 'started',
+  Delivered = 'delivered',
+  FeedbackReceived = 'feedback_received',
+}
+
 export enum ReferenceEntityType {
   Tobaccos = 'tobaccos',
   Hookahs = 'hookahs',
@@ -89,37 +97,84 @@ export interface ReferencesSnapshot {
   charcoals: CharcoalReference[];
 }
 
-export interface OrderRecord {
-  id: string;
+export interface OrderFeedbackRecord {
+  clientUserId: string;
+  ratingScore: number;
+  ratingReview: string | undefined;
+  submittedAt: string;
+}
+
+export interface OrderParticipantRecord {
   clientUserId: string;
   description: string;
   requestedTobaccoIds: string[];
+  joinedAt: string;
+  feedback: OrderFeedbackRecord | undefined;
+}
+
+export interface OrderTimelineEntryRecord {
+  id: string;
+  type: OrderTimelineEventType;
+  status: OrderStatus;
+  occurredAt: string;
+  actorUserId: string | undefined;
+  note: string;
+}
+
+export interface OrderRecord {
+  id: string;
+  tableLabel: string;
   status: OrderStatus;
   createdAt: string;
   updatedAt: string;
+  deliveredAt: string | undefined;
+  feedbackAt: string | undefined;
   acceptedByUserId: string | undefined;
   actualTobaccoIds: string[] | undefined;
   packingComment: string | undefined;
-  deliveredAt: string | undefined;
-  ratingScore: number | undefined;
+  participants: OrderParticipantRecord[];
+  timeline: OrderTimelineEntryRecord[];
+}
+
+export interface OrderFeedbackView {
+  client: AppUser;
+  ratingScore: number;
   ratingReview: string | undefined;
-  ratedAt: string | undefined;
+  submittedAt: string;
+}
+
+export interface OrderParticipantView {
+  client: AppUser;
+  description: string;
+  joinedAt: string;
+  requestedTobaccos: TobaccoReference[];
+  feedback: OrderFeedbackView | undefined;
+}
+
+export interface OrderTimelineEntryView {
+  id: string;
+  type: OrderTimelineEventType;
+  status: OrderStatus;
+  occurredAt: string;
+  actor: AppUser | undefined;
+  note: string;
 }
 
 export interface OrderView {
   id: string;
+  tableLabel: string;
   status: OrderStatus;
-  description: string;
   createdAt: string;
   updatedAt: string;
   deliveredAt: string | undefined;
-  client: AppUser;
+  feedbackAt: string | undefined;
   acceptedBy: AppUser | undefined;
+  participants: OrderParticipantView[];
   requestedTobaccos: TobaccoReference[];
   actualTobaccos: TobaccoReference[];
   packingComment: string | undefined;
-  ratingScore: number | undefined;
-  ratingReview: string | undefined;
+  feedbacks: OrderFeedbackView[];
+  timeline: OrderTimelineEntryView[];
 }
 
 export interface UpsertReferencePayload {

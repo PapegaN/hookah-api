@@ -19,15 +19,25 @@ interface ReferencesResponseBody {
 
 interface OrderResponseBody {
   id: string;
+  tableLabel: string;
   status: string;
-  description: string;
+  participants: Array<{
+    client: {
+      login: string;
+    };
+    feedback?: {
+      ratingScore: number;
+      submittedAt: string;
+    };
+  }>;
   requestedTobaccos: Array<{ id: string }>;
   actualTobaccos: Array<{ id: string }>;
-  acceptedBy?: {
-    login: string;
-  };
-  ratingScore?: number;
-  ratingReview?: string;
+  feedbacks: Array<{
+    client: {
+      login: string;
+    };
+    ratingScore: number;
+  }>;
 }
 
 describe('API (e2e)', () => {
@@ -83,7 +93,7 @@ describe('API (e2e)', () => {
     expect(referencesBody.tobaccos.length).toBeGreaterThan(0);
   });
 
-  it('runs the client to master feedback order flow', async () => {
+  it('runs a shared table order flow for multiple clients', async () => {
     const httpServer = app.getHttpServer() as Parameters<typeof request>[0];
     const adminLoginResponse = await request(httpServer)
       .post('/api/v1/auth/login')
@@ -112,18 +122,44 @@ describe('API (e2e)', () => {
       .expect(201);
     const clientBody = clientLoginResponse.body as LoginResponseBody;
 
-    const createOrderResponse = await request(httpServer)
+    const firstOrderResponse = await request(httpServer)
       .post('/api/v1/orders')
       .set('Authorization', `Bearer ${clientBody.accessToken}`)
       .send({
-        description: 'Хочу ягодный микс с холодком.',
+        tableLabel: 'Table 1',
+        description: 'Berry mix with cooling.',
         requestedTobaccoIds: tobaccoIds,
       })
       .expect(201);
-    const createdOrderBody = createOrderResponse.body as OrderResponseBody;
+    const firstOrderBody = firstOrderResponse.body as OrderResponseBody;
 
-    expect(createdOrderBody.status).toBe('new');
-    expect(createdOrderBody.requestedTobaccos).toHaveLength(2);
+    expect(firstOrderBody.status).toBe('new');
+    expect(firstOrderBody.tableLabel).toBe('Table 1');
+    expect(firstOrderBody.participants).toHaveLength(1);
+
+    const secondClientRegisterResponse = await request(httpServer)
+      .post('/api/v1/auth/register')
+      .send({
+        login: 'tablemate',
+        password: 'tablemate',
+      })
+      .expect(201);
+    const secondClientBody =
+      secondClientRegisterResponse.body as LoginResponseBody;
+
+    const secondOrderResponse = await request(httpServer)
+      .post('/api/v1/orders')
+      .set('Authorization', `Bearer ${secondClientBody.accessToken}`)
+      .send({
+        tableLabel: 'Table 1',
+        description: 'Want it softer and sweeter.',
+        requestedTobaccoIds: tobaccoIds,
+      })
+      .expect(201);
+    const secondOrderBody = secondOrderResponse.body as OrderResponseBody;
+
+    expect(secondOrderBody.id).toBe(firstOrderBody.id);
+    expect(secondOrderBody.participants).toHaveLength(2);
 
     const masterLoginResponse = await request(httpServer)
       .post('/api/v1/auth/login')
@@ -135,20 +171,19 @@ describe('API (e2e)', () => {
     const masterBody = masterLoginResponse.body as LoginResponseBody;
 
     const startedOrderResponse = await request(httpServer)
-      .patch(`/api/v1/orders/${createdOrderBody.id}/start`)
+      .patch(`/api/v1/orders/${firstOrderBody.id}/start`)
       .set('Authorization', `Bearer ${masterBody.accessToken}`)
       .expect(200);
     const startedOrderBody = startedOrderResponse.body as OrderResponseBody;
 
     expect(startedOrderBody.status).toBe('in_progress');
-    expect(startedOrderBody.acceptedBy?.login).toBe('master');
 
     const fulfilledOrderResponse = await request(httpServer)
-      .patch(`/api/v1/orders/${createdOrderBody.id}/fulfill`)
+      .patch(`/api/v1/orders/${firstOrderBody.id}/fulfill`)
       .set('Authorization', `Bearer ${masterBody.accessToken}`)
       .send({
         actualTobaccoIds: tobaccoIds,
-        packingComment: 'Сделал мягче и добавил больше холода.',
+        packingComment: 'Balanced the bowl for the whole table.',
       })
       .expect(200);
     const fulfilledOrderBody = fulfilledOrderResponse.body as OrderResponseBody;
@@ -156,19 +191,31 @@ describe('API (e2e)', () => {
     expect(fulfilledOrderBody.status).toBe('ready_for_feedback');
     expect(fulfilledOrderBody.actualTobaccos).toHaveLength(2);
 
-    const feedbackResponse = await request(httpServer)
-      .patch(`/api/v1/orders/${createdOrderBody.id}/feedback`)
+    const firstFeedbackResponse = await request(httpServer)
+      .patch(`/api/v1/orders/${firstOrderBody.id}/feedback`)
       .set('Authorization', `Bearer ${clientBody.accessToken}`)
       .send({
         ratingScore: 5,
-        ratingReview: 'Очень понравилось, хороший баланс.',
+        ratingReview: 'Great balance.',
       })
       .expect(200);
-    const feedbackBody = feedbackResponse.body as OrderResponseBody;
+    const firstFeedbackBody = firstFeedbackResponse.body as OrderResponseBody;
 
-    expect(feedbackBody.status).toBe('rated');
-    expect(feedbackBody.ratingScore).toBe(5);
-    expect(feedbackBody.ratingReview).toContain('Очень понравилось');
+    expect(firstFeedbackBody.status).toBe('ready_for_feedback');
+    expect(firstFeedbackBody.feedbacks).toHaveLength(1);
+
+    const secondFeedbackResponse = await request(httpServer)
+      .patch(`/api/v1/orders/${firstOrderBody.id}/feedback`)
+      .set('Authorization', `Bearer ${secondClientBody.accessToken}`)
+      .send({
+        ratingScore: 4,
+        ratingReview: 'Nice and soft.',
+      })
+      .expect(200);
+    const secondFeedbackBody = secondFeedbackResponse.body as OrderResponseBody;
+
+    expect(secondFeedbackBody.status).toBe('rated');
+    expect(secondFeedbackBody.feedbacks).toHaveLength(2);
   });
 
   afterEach(async () => {

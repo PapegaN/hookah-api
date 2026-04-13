@@ -10,14 +10,20 @@ import type {
   CharcoalReference,
   HookahReference,
   KalaudReference,
+  OrderParticipantRecord,
   OrderRecord,
-  OrderView,
+  OrderTimelineEntryRecord,
   ReferencesSnapshot,
   StoredUser,
   TobaccoReference,
   UpsertReferencePayload,
 } from './platform.models';
-import { OrderStatus, ReferenceEntityType, UserRole } from './platform.models';
+import {
+  OrderStatus,
+  OrderTimelineEventType,
+  ReferenceEntityType,
+  UserRole,
+} from './platform.models';
 
 interface CreateUserInput {
   login: string;
@@ -74,25 +80,40 @@ export class PlatformDataService {
       telegramUsername: 'hookah_client',
     });
 
+    const timestamp = new Date().toISOString();
+
     this.orders.push({
       id: randomUUID(),
-      clientUserId: client.id,
-      description:
-        'Хочу мягкий свежий микс с заметной ягодной нотой и без тяжелой десертности.',
-      requestedTobaccoIds: [
-        this.tobaccos[0]?.id ?? '',
-        this.tobaccos[2]?.id ?? '',
-      ].filter((value) => value.length > 0),
+      tableLabel: 'Table 3',
       status: OrderStatus.New,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: timestamp,
+      updatedAt: timestamp,
+      deliveredAt: undefined,
+      feedbackAt: undefined,
       acceptedByUserId: undefined,
       actualTobaccoIds: undefined,
       packingComment: undefined,
-      deliveredAt: undefined,
-      ratingScore: undefined,
-      ratingReview: undefined,
-      ratedAt: undefined,
+      participants: [
+        {
+          clientUserId: client.id,
+          description: 'Fresh berry mix with a light cooling accent.',
+          requestedTobaccoIds: [
+            this.tobaccos[0]?.id ?? '',
+            this.tobaccos[2]?.id ?? '',
+          ].filter((value) => value.length > 0),
+          joinedAt: timestamp,
+          feedback: undefined,
+        },
+      ],
+      timeline: [
+        this.createTimelineEntry({
+          type: OrderTimelineEventType.Created,
+          status: OrderStatus.New,
+          occurredAt: timestamp,
+          actorUserId: client.id,
+          note: 'Order created for Table 3.',
+        }),
+      ],
     });
 
     if (!admin || !master) {
@@ -257,10 +278,14 @@ export class PlatformDataService {
     }
   }
 
-  listOrdersForUser(currentUser: AppUser): OrderView[] {
+  listOrdersForUser(currentUser: AppUser) {
     const visibleOrders =
       currentUser.role === UserRole.Client
-        ? this.orders.filter((order) => order.clientUserId === currentUser.id)
+        ? this.orders.filter((order) =>
+            order.participants.some(
+              (participant) => participant.clientUserId === currentUser.id,
+            ),
+          )
         : this.orders;
 
     return visibleOrders
@@ -271,29 +296,74 @@ export class PlatformDataService {
 
   createOrder(
     clientUserId: string,
-    input: { description: string; requestedTobaccoIds: string[] },
-  ): OrderView {
+    input: {
+      tableLabel: string;
+      description: string;
+      requestedTobaccoIds: string[];
+    },
+  ) {
+    const tableLabel = this.requireString(input.tableLabel, 'tableLabel');
     const requestedTobaccoIds = this.validateTobaccoSelection(
       input.requestedTobaccoIds,
       'requested blend',
     );
     const timestamp = new Date().toISOString();
+    const participant: OrderParticipantRecord = {
+      clientUserId,
+      description: this.requireString(input.description, 'description'),
+      requestedTobaccoIds,
+      joinedAt: timestamp,
+      feedback: undefined,
+    };
+    const openOrder = this.findOpenOrderForTable(tableLabel);
+
+    if (openOrder) {
+      if (
+        openOrder.participants.some(
+          (entry) => entry.clientUserId === participant.clientUserId,
+        )
+      ) {
+        throw new BadRequestException(
+          'Client already joined the active order for this table',
+        );
+      }
+
+      openOrder.participants.push(participant);
+      openOrder.updatedAt = timestamp;
+      openOrder.timeline.unshift(
+        this.createTimelineEntry({
+          type: OrderTimelineEventType.ParticipantJoined,
+          status: openOrder.status,
+          occurredAt: timestamp,
+          actorUserId: clientUserId,
+          note: `Client joined ${tableLabel}.`,
+        }),
+      );
+
+      return this.toOrderView(openOrder);
+    }
 
     const order: OrderRecord = {
       id: randomUUID(),
-      clientUserId,
-      description: input.description.trim(),
-      requestedTobaccoIds,
+      tableLabel,
       status: OrderStatus.New,
       createdAt: timestamp,
       updatedAt: timestamp,
+      deliveredAt: undefined,
+      feedbackAt: undefined,
       acceptedByUserId: undefined,
       actualTobaccoIds: undefined,
       packingComment: undefined,
-      deliveredAt: undefined,
-      ratingScore: undefined,
-      ratingReview: undefined,
-      ratedAt: undefined,
+      participants: [participant],
+      timeline: [
+        this.createTimelineEntry({
+          type: OrderTimelineEventType.Created,
+          status: OrderStatus.New,
+          occurredAt: timestamp,
+          actorUserId: clientUserId,
+          note: `Order created for ${tableLabel}.`,
+        }),
+      ],
     };
 
     this.orders.unshift(order);
@@ -301,16 +371,27 @@ export class PlatformDataService {
     return this.toOrderView(order);
   }
 
-  startOrder(orderId: string, actorUserId: string): OrderView {
+  startOrder(orderId: string, actorUserId: string) {
     const order = this.findOrder(orderId);
 
     if (order.status !== OrderStatus.New) {
       throw new BadRequestException('Only new orders can be taken into work');
     }
 
+    const timestamp = new Date().toISOString();
+
     order.status = OrderStatus.InProgress;
     order.acceptedByUserId = actorUserId;
-    order.updatedAt = new Date().toISOString();
+    order.updatedAt = timestamp;
+    order.timeline.unshift(
+      this.createTimelineEntry({
+        type: OrderTimelineEventType.Started,
+        status: order.status,
+        occurredAt: timestamp,
+        actorUserId,
+        note: `Order taken into work for ${order.tableLabel}.`,
+      }),
+    );
 
     return this.toOrderView(order);
   }
@@ -319,7 +400,7 @@ export class PlatformDataService {
     orderId: string,
     actorUserId: string,
     input: { actualTobaccoIds: string[]; packingComment: string },
-  ): OrderView {
+  ) {
     const order = this.findOrder(orderId);
 
     if (
@@ -331,6 +412,8 @@ export class PlatformDataService {
       );
     }
 
+    const timestamp = new Date().toISOString();
+
     order.status = OrderStatus.ReadyForFeedback;
     order.acceptedByUserId = actorUserId;
     order.actualTobaccoIds = this.validateTobaccoSelection(
@@ -338,8 +421,17 @@ export class PlatformDataService {
       'actual packing',
     );
     order.packingComment = input.packingComment.trim();
-    order.deliveredAt = new Date().toISOString();
-    order.updatedAt = order.deliveredAt;
+    order.deliveredAt = timestamp;
+    order.updatedAt = timestamp;
+    order.timeline.unshift(
+      this.createTimelineEntry({
+        type: OrderTimelineEventType.Delivered,
+        status: order.status,
+        occurredAt: timestamp,
+        actorUserId,
+        note: `Order delivered for ${order.tableLabel}.`,
+      }),
+    );
 
     return this.toOrderView(order);
   }
@@ -348,26 +440,53 @@ export class PlatformDataService {
     orderId: string,
     actor: AppUser,
     input: { ratingScore: number; ratingReview?: string },
-  ): OrderView {
+  ) {
     const order = this.findOrder(orderId);
+    const participant = order.participants.find(
+      (entry) => entry.clientUserId === actor.id,
+    );
 
-    if (order.clientUserId !== actor.id) {
+    if (!participant) {
       throw new BadRequestException(
-        'Client can leave feedback only for own order',
+        'Client can leave feedback only for joined table order',
       );
     }
 
-    if (order.status !== OrderStatus.ReadyForFeedback) {
+    if (
+      order.status !== OrderStatus.ReadyForFeedback &&
+      order.status !== OrderStatus.Rated
+    ) {
       throw new BadRequestException(
         'Feedback is available only after order delivery',
       );
     }
 
-    order.status = OrderStatus.Rated;
-    order.ratingScore = input.ratingScore;
-    order.ratingReview = input.ratingReview?.trim();
-    order.ratedAt = new Date().toISOString();
-    order.updatedAt = order.ratedAt;
+    if (participant.feedback) {
+      throw new BadRequestException('Feedback already exists for this client');
+    }
+
+    const timestamp = new Date().toISOString();
+
+    participant.feedback = {
+      clientUserId: actor.id,
+      ratingScore: input.ratingScore,
+      ratingReview: input.ratingReview?.trim(),
+      submittedAt: timestamp,
+    };
+    order.feedbackAt = timestamp;
+    order.updatedAt = timestamp;
+    order.status = order.participants.every((entry) => entry.feedback)
+      ? OrderStatus.Rated
+      : OrderStatus.ReadyForFeedback;
+    order.timeline.unshift(
+      this.createTimelineEntry({
+        type: OrderTimelineEventType.FeedbackReceived,
+        status: order.status,
+        occurredAt: timestamp,
+        actorUserId: actor.id,
+        note: `${actor.login} left feedback.`,
+      }),
+    );
 
     return this.toOrderView(order);
   }
@@ -724,6 +843,15 @@ export class PlatformDataService {
     return order;
   }
 
+  private findOpenOrderForTable(tableLabel: string): OrderRecord | undefined {
+    return this.orders.find(
+      (order) =>
+        order.tableLabel.toLowerCase() === tableLabel.toLowerCase() &&
+        (order.status === OrderStatus.New ||
+          order.status === OrderStatus.InProgress),
+    );
+  }
+
   private toPublicUser(user: StoredUser): AppUser {
     return {
       id: user.id,
@@ -736,29 +864,62 @@ export class PlatformDataService {
     };
   }
 
-  private toOrderView(order: OrderRecord): OrderView {
-    const client = this.findPublicUserById(order.clientUserId);
+  private toOrderView(order: OrderRecord) {
+    const participants = order.participants.map((participant) => {
+      const client = this.findPublicUserById(participant.clientUserId);
 
-    if (!client) {
-      throw new NotFoundException('Client for order not found');
-    }
+      if (!client) {
+        throw new NotFoundException('Client for order not found');
+      }
+
+      return {
+        client,
+        description: participant.description,
+        joinedAt: participant.joinedAt,
+        requestedTobaccos: this.resolveTobaccos(
+          participant.requestedTobaccoIds,
+        ),
+        feedback: participant.feedback
+          ? this.toFeedbackView(participant.feedback)
+          : undefined,
+      };
+    });
+    const feedbacks = participants
+      .map((participant) => participant.feedback)
+      .filter((feedback): feedback is NonNullable<typeof feedback> =>
+        Boolean(feedback),
+      );
 
     return {
       id: order.id,
+      tableLabel: order.tableLabel,
       status: order.status,
-      description: order.description,
       createdAt: order.createdAt,
       updatedAt: order.updatedAt,
       deliveredAt: order.deliveredAt,
-      client,
+      feedbackAt: order.feedbackAt,
       acceptedBy: order.acceptedByUserId
         ? this.findPublicUserById(order.acceptedByUserId)
         : undefined,
-      requestedTobaccos: this.resolveTobaccos(order.requestedTobaccoIds),
+      participants,
+      requestedTobaccos: this.resolveDistinctTobaccos(
+        order.participants.map(
+          (participant) => participant.requestedTobaccoIds,
+        ),
+      ),
       actualTobaccos: this.resolveTobaccos(order.actualTobaccoIds ?? []),
       packingComment: order.packingComment,
-      ratingScore: order.ratingScore,
-      ratingReview: order.ratingReview,
+      feedbacks,
+      timeline: order.timeline.map((entry) => ({
+        id: entry.id,
+        type: entry.type,
+        status: entry.status,
+        occurredAt: entry.occurredAt,
+        actor: entry.actorUserId
+          ? this.findPublicUserById(entry.actorUserId)
+          : undefined,
+        note: entry.note,
+      })),
     };
   }
 
@@ -768,6 +929,47 @@ export class PlatformDataService {
         this.tobaccos.find((tobacco) => tobacco.id === tobaccoId),
       )
       .filter((tobacco): tobacco is TobaccoReference => Boolean(tobacco));
+  }
+
+  private resolveDistinctTobaccos(tobaccoIdsList: string[][]) {
+    return this.resolveTobaccos([...new Set(tobaccoIdsList.flat())]);
+  }
+
+  private toFeedbackView(feedback: {
+    clientUserId: string;
+    ratingScore: number;
+    ratingReview: string | undefined;
+    submittedAt: string;
+  }) {
+    const client = this.findPublicUserById(feedback.clientUserId);
+
+    if (!client) {
+      throw new NotFoundException('Client for feedback not found');
+    }
+
+    return {
+      client,
+      ratingScore: feedback.ratingScore,
+      ratingReview: feedback.ratingReview,
+      submittedAt: feedback.submittedAt,
+    };
+  }
+
+  private createTimelineEntry(input: {
+    type: OrderTimelineEventType;
+    status: OrderStatus;
+    occurredAt: string;
+    actorUserId: string | undefined;
+    note: string;
+  }): OrderTimelineEntryRecord {
+    return {
+      id: randomUUID(),
+      type: input.type,
+      status: input.status,
+      occurredAt: input.occurredAt,
+      actorUserId: input.actorUserId,
+      note: input.note,
+    };
   }
 
   private validateTobaccoSelection(

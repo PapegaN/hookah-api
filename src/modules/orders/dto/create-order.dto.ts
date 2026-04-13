@@ -9,6 +9,13 @@ import {
 
 export class CreateOrderDto {
   @ApiProperty({
+    example: 'Table 3',
+  })
+  @IsString()
+  @MinLength(3)
+  tableLabel!: string;
+
+  @ApiProperty({
     example:
       'Хочу мягкий ягодно-свежий кальян без сильной десертности, можно с легким холодком.',
   })
