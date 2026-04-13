@@ -38,11 +38,35 @@ export class OrdersController {
     return this.platformDataService.listOrdersForUser(user);
   }
 
+  @Get(':id')
+  @ApiOperation({ summary: 'Получить детальную карточку заказа' })
+  getOrder(@Param('id') id: string, @CurrentUser() user: AppUser) {
+    return this.platformDataService.getOrderById(id, user);
+  }
+
   @Post()
   @Roles(UserRole.Client)
   @ApiOperation({ summary: 'Создать заказ от имени клиента' })
   createOrder(@CurrentUser() user: AppUser, @Body() body: CreateOrderDto) {
     return this.platformDataService.createOrder(user.id, body);
+  }
+
+  @Patch(':id/participants/:clientUserId/approve-table')
+  @Roles(UserRole.Admin, UserRole.HookahMaster)
+  @ApiOperation({
+    summary:
+      'Подтвердить, что клиент действительно находится за выбранным столом',
+  })
+  approveParticipantTable(
+    @Param('id') id: string,
+    @Param('clientUserId') clientUserId: string,
+    @CurrentUser() user: AppUser,
+  ) {
+    return this.platformDataService.approveParticipantTable(
+      id,
+      clientUserId,
+      user.id,
+    );
   }
 
   @Patch(':id/start')

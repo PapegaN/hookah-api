@@ -10,9 +10,12 @@ import type {
   CharcoalReference,
   HookahReference,
   KalaudReference,
+  OrderFeedbackRecord,
+  OrderFeedbackView,
   OrderParticipantRecord,
   OrderRecord,
   OrderTimelineEntryRecord,
+  OrderView,
   ReferencesSnapshot,
   StoredUser,
   TobaccoReference,
@@ -22,6 +25,7 @@ import {
   OrderStatus,
   OrderTimelineEventType,
   ReferenceEntityType,
+  TableApprovalStatus,
   UserRole,
 } from './platform.models';
 
@@ -31,6 +35,8 @@ interface CreateUserInput {
   role: UserRole;
   email: string | undefined;
   telegramUsername: string | undefined;
+  isApproved: boolean;
+  approvedByUserId: string | undefined;
 }
 
 @Injectable()
@@ -56,35 +62,39 @@ export class PlatformDataService {
       return;
     }
 
-    const admin = this.createUser({
+    const admin = this.createUserRecord({
       login: 'admin',
       passwordHash: hashes.admin,
       role: UserRole.Admin,
       email: 'admin@hookah.local',
       telegramUsername: 'hookah_admin',
+      isApproved: true,
+      approvedByUserId: undefined,
     });
-
-    const master = this.createUser({
+    const master = this.createUserRecord({
       login: 'master',
       passwordHash: hashes.master,
       role: UserRole.HookahMaster,
       email: 'master@hookah.local',
       telegramUsername: 'hookah_master',
+      isApproved: true,
+      approvedByUserId: admin.id,
     });
-
-    const client = this.createUser({
+    const client = this.createUserRecord({
       login: 'client',
       passwordHash: hashes.client,
       role: UserRole.Client,
       email: 'client@hookah.local',
       telegramUsername: 'hookah_client',
+      isApproved: true,
+      approvedByUserId: admin.id,
     });
 
     const timestamp = new Date().toISOString();
 
     this.orders.push({
       id: randomUUID(),
-      tableLabel: 'Table 3',
+      tableLabel: 'Стол 3',
       status: OrderStatus.New,
       createdAt: timestamp,
       updatedAt: timestamp,
@@ -96,12 +106,15 @@ export class PlatformDataService {
       participants: [
         {
           clientUserId: client.id,
-          description: 'Fresh berry mix with a light cooling accent.',
+          description: 'Хочу ягодный микс с холодком и мягкой крепостью.',
           requestedTobaccoIds: [
             this.tobaccos[0]?.id ?? '',
             this.tobaccos[2]?.id ?? '',
           ].filter((value) => value.length > 0),
           joinedAt: timestamp,
+          tableApprovalStatus: TableApprovalStatus.Pending,
+          tableApprovedAt: undefined,
+          tableApprovedByUserId: undefined,
           feedback: undefined,
         },
       ],
@@ -111,12 +124,12 @@ export class PlatformDataService {
           status: OrderStatus.New,
           occurredAt: timestamp,
           actorUserId: client.id,
-          note: 'Order created for Table 3.',
+          note: 'Клиент создал заказ для стола 3.',
         }),
       ],
     });
 
-    if (!admin || !master) {
+    if (!master) {
       throw new Error('Demo users must be initialized');
     }
   }
@@ -138,20 +151,41 @@ export class PlatformDataService {
   }
 
   listUsers(): AppUser[] {
-    return this.users.map((user) => this.toPublicUser(user));
+    return this.users
+      .slice()
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .map((user) => this.toPublicUser(user));
   }
 
-  registerClient(input: Omit<CreateUserInput, 'role'>): AppUser {
-    return this.createUser({
+  registerClient(
+    input: Omit<CreateUserInput, 'role' | 'isApproved' | 'approvedByUserId'>,
+  ): AppUser {
+    return this.createUserRecord({
       ...input,
       role: UserRole.Client,
+      isApproved: false,
+      approvedByUserId: undefined,
+    });
+  }
+
+  createUserByAdmin(
+    actorUserId: string,
+    input: Omit<CreateUserInput, 'approvedByUserId'>,
+  ): AppUser {
+    return this.createUserRecord({
+      ...input,
+      approvedByUserId: input.isApproved ? actorUserId : undefined,
     });
   }
 
   updateUser(
+    actorUserId: string,
     userId: string,
     payload: Partial<
-      Pick<AppUser, 'login' | 'role' | 'email' | 'telegramUsername'>
+      Pick<
+        AppUser,
+        'login' | 'role' | 'email' | 'telegramUsername' | 'isApproved'
+      >
     >,
   ): AppUser {
     const targetUser = this.findStoredUserById(userId);
@@ -160,8 +194,8 @@ export class PlatformDataService {
       throw new NotFoundException('User not found');
     }
 
-    if (payload.login) {
-      const normalizedLogin = payload.login.trim();
+    if (payload.login !== undefined) {
+      const normalizedLogin = this.requireString(payload.login, 'login');
       const loginOwner = this.findStoredUserByLogin(normalizedLogin);
 
       if (loginOwner && loginOwner.id !== userId) {
@@ -171,7 +205,7 @@ export class PlatformDataService {
       targetUser.login = normalizedLogin;
     }
 
-    if (payload.role) {
+    if (payload.role !== undefined) {
       targetUser.role = payload.role;
     }
 
@@ -210,6 +244,20 @@ export class PlatformDataService {
       }
 
       targetUser.telegramUsername = normalizedTelegram;
+    }
+
+    if (payload.isApproved !== undefined) {
+      const timestamp = new Date().toISOString();
+
+      if (payload.isApproved) {
+        targetUser.isApproved = true;
+        targetUser.approvedAt = timestamp;
+        targetUser.approvedByUserId = actorUserId;
+      } else {
+        targetUser.isApproved = false;
+        targetUser.approvedAt = undefined;
+        targetUser.approvedByUserId = undefined;
+      }
     }
 
     targetUser.updatedAt = new Date().toISOString();
@@ -278,7 +326,11 @@ export class PlatformDataService {
     }
   }
 
-  listOrdersForUser(currentUser: AppUser) {
+  listOrdersForUser(currentUser: AppUser): OrderView[] {
+    if (!currentUser.isApproved) {
+      return [];
+    }
+
     const visibleOrders =
       currentUser.role === UserRole.Client
         ? this.orders.filter((order) =>
@@ -294,6 +346,21 @@ export class PlatformDataService {
       .map((order) => this.toOrderView(order));
   }
 
+  getOrderById(orderId: string, currentUser: AppUser): OrderView {
+    const order = this.findOrder(orderId);
+
+    if (
+      currentUser.role === UserRole.Client &&
+      !order.participants.some(
+        (participant) => participant.clientUserId === currentUser.id,
+      )
+    ) {
+      throw new NotFoundException('Order not found');
+    }
+
+    return this.toOrderView(order);
+  }
+
   createOrder(
     clientUserId: string,
     input: {
@@ -301,7 +368,13 @@ export class PlatformDataService {
       description: string;
       requestedTobaccoIds: string[];
     },
-  ) {
+  ): OrderView {
+    const client = this.findStoredUserById(clientUserId);
+
+    if (!client || !client.isApproved) {
+      throw new BadRequestException('Client approval is required');
+    }
+
     const tableLabel = this.requireString(input.tableLabel, 'tableLabel');
     const requestedTobaccoIds = this.validateTobaccoSelection(
       input.requestedTobaccoIds,
@@ -313,6 +386,9 @@ export class PlatformDataService {
       description: this.requireString(input.description, 'description'),
       requestedTobaccoIds,
       joinedAt: timestamp,
+      tableApprovalStatus: TableApprovalStatus.Pending,
+      tableApprovedAt: undefined,
+      tableApprovedByUserId: undefined,
       feedback: undefined,
     };
     const openOrder = this.findOpenOrderForTable(tableLabel);
@@ -336,7 +412,7 @@ export class PlatformDataService {
           status: openOrder.status,
           occurredAt: timestamp,
           actorUserId: clientUserId,
-          note: `Client joined ${tableLabel}.`,
+          note: `${client.login} присоединился к заказу стола ${tableLabel}.`,
         }),
       );
 
@@ -361,7 +437,7 @@ export class PlatformDataService {
           status: OrderStatus.New,
           occurredAt: timestamp,
           actorUserId: clientUserId,
-          note: `Order created for ${tableLabel}.`,
+          note: `${client.login} создал заказ для стола ${tableLabel}.`,
         }),
       ],
     };
@@ -371,7 +447,45 @@ export class PlatformDataService {
     return this.toOrderView(order);
   }
 
-  startOrder(orderId: string, actorUserId: string) {
+  approveParticipantTable(
+    orderId: string,
+    clientUserId: string,
+    actorUserId: string,
+  ): OrderView {
+    const order = this.findOrder(orderId);
+    const participant = order.participants.find(
+      (entry) => entry.clientUserId === clientUserId,
+    );
+    const client = this.findStoredUserById(clientUserId);
+
+    if (!participant || !client) {
+      throw new NotFoundException('Participant not found');
+    }
+
+    if (participant.tableApprovalStatus === TableApprovalStatus.Approved) {
+      return this.toOrderView(order);
+    }
+
+    const timestamp = new Date().toISOString();
+
+    participant.tableApprovalStatus = TableApprovalStatus.Approved;
+    participant.tableApprovedAt = timestamp;
+    participant.tableApprovedByUserId = actorUserId;
+    order.updatedAt = timestamp;
+    order.timeline.unshift(
+      this.createTimelineEntry({
+        type: OrderTimelineEventType.ParticipantTableApproved,
+        status: order.status,
+        occurredAt: timestamp,
+        actorUserId,
+        note: `${client.login} подтверждён за ${order.tableLabel}.`,
+      }),
+    );
+
+    return this.toOrderView(order);
+  }
+
+  startOrder(orderId: string, actorUserId: string): OrderView {
     const order = this.findOrder(orderId);
 
     if (order.status !== OrderStatus.New) {
@@ -389,7 +503,7 @@ export class PlatformDataService {
         status: order.status,
         occurredAt: timestamp,
         actorUserId,
-        note: `Order taken into work for ${order.tableLabel}.`,
+        note: `Заказ для ${order.tableLabel} взят в работу.`,
       }),
     );
 
@@ -400,7 +514,7 @@ export class PlatformDataService {
     orderId: string,
     actorUserId: string,
     input: { actualTobaccoIds: string[]; packingComment: string },
-  ) {
+  ): OrderView {
     const order = this.findOrder(orderId);
 
     if (
@@ -420,7 +534,7 @@ export class PlatformDataService {
       input.actualTobaccoIds,
       'actual packing',
     );
-    order.packingComment = input.packingComment.trim();
+    order.packingComment = this.normalizeOptionalValue(input.packingComment);
     order.deliveredAt = timestamp;
     order.updatedAt = timestamp;
     order.timeline.unshift(
@@ -429,7 +543,7 @@ export class PlatformDataService {
         status: order.status,
         occurredAt: timestamp,
         actorUserId,
-        note: `Order delivered for ${order.tableLabel}.`,
+        note: `Заказ для ${order.tableLabel} отдан клиентам.`,
       }),
     );
 
@@ -440,7 +554,7 @@ export class PlatformDataService {
     orderId: string,
     actor: AppUser,
     input: { ratingScore: number; ratingReview?: string },
-  ) {
+  ): OrderView {
     const order = this.findOrder(orderId);
     const participant = order.participants.find(
       (entry) => entry.clientUserId === actor.id,
@@ -469,8 +583,8 @@ export class PlatformDataService {
 
     participant.feedback = {
       clientUserId: actor.id,
-      ratingScore: input.ratingScore,
-      ratingReview: input.ratingReview?.trim(),
+      ratingScore: this.requireScaleValue(input.ratingScore, 'ratingScore'),
+      ratingReview: this.normalizeOptionalValue(input.ratingReview),
       submittedAt: timestamp,
     };
     order.feedbackAt = timestamp;
@@ -484,15 +598,15 @@ export class PlatformDataService {
         status: order.status,
         occurredAt: timestamp,
         actorUserId: actor.id,
-        note: `${actor.login} left feedback.`,
+        note: `${actor.login} оставил отзыв по заказу ${order.tableLabel}.`,
       }),
     );
 
     return this.toOrderView(order);
   }
 
-  private createUser(input: CreateUserInput): AppUser {
-    const normalizedLogin = input.login.trim();
+  private createUserRecord(input: CreateUserInput): AppUser {
+    const normalizedLogin = this.requireString(input.login, 'login');
 
     if (this.findStoredUserByLogin(normalizedLogin)) {
       throw new BadRequestException('Login is already in use');
@@ -525,7 +639,6 @@ export class PlatformDataService {
     }
 
     const timestamp = new Date().toISOString();
-
     const storedUser: StoredUser = {
       id: randomUUID(),
       login: normalizedLogin,
@@ -533,6 +646,9 @@ export class PlatformDataService {
       role: input.role,
       email: normalizedEmail,
       telegramUsername: normalizedTelegram,
+      isApproved: input.isApproved,
+      approvedAt: input.isApproved ? timestamp : undefined,
+      approvedByUserId: input.approvedByUserId,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -859,12 +975,15 @@ export class PlatformDataService {
       role: user.role,
       email: user.email,
       telegramUsername: user.telegramUsername,
+      isApproved: user.isApproved,
+      approvedAt: user.approvedAt,
+      approvedBy: this.toUserPreview(user.approvedByUserId),
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
   }
 
-  private toOrderView(order: OrderRecord) {
+  private toOrderView(order: OrderRecord): OrderView {
     const participants = order.participants.map((participant) => {
       const client = this.findPublicUserById(participant.clientUserId);
 
@@ -879,6 +998,9 @@ export class PlatformDataService {
         requestedTobaccos: this.resolveTobaccos(
           participant.requestedTobaccoIds,
         ),
+        tableApprovalStatus: participant.tableApprovalStatus,
+        tableApprovedAt: participant.tableApprovedAt,
+        tableApprovedBy: this.toUserPreview(participant.tableApprovedByUserId),
         feedback: participant.feedback
           ? this.toFeedbackView(participant.feedback)
           : undefined,
@@ -923,6 +1045,26 @@ export class PlatformDataService {
     };
   }
 
+  private toUserPreview(userId: string | undefined):
+    | {
+        id: string;
+        login: string;
+      }
+    | undefined {
+    if (!userId) {
+      return undefined;
+    }
+
+    const user = this.findStoredUserById(userId);
+
+    return user
+      ? {
+          id: user.id,
+          login: user.login,
+        }
+      : undefined;
+  }
+
   private resolveTobaccos(tobaccoIds: string[]): TobaccoReference[] {
     return tobaccoIds
       .map((tobaccoId) =>
@@ -931,16 +1073,13 @@ export class PlatformDataService {
       .filter((tobacco): tobacco is TobaccoReference => Boolean(tobacco));
   }
 
-  private resolveDistinctTobaccos(tobaccoIdsList: string[][]) {
+  private resolveDistinctTobaccos(
+    tobaccoIdsList: string[][],
+  ): TobaccoReference[] {
     return this.resolveTobaccos([...new Set(tobaccoIdsList.flat())]);
   }
 
-  private toFeedbackView(feedback: {
-    clientUserId: string;
-    ratingScore: number;
-    ratingReview: string | undefined;
-    submittedAt: string;
-  }) {
+  private toFeedbackView(feedback: OrderFeedbackRecord): OrderFeedbackView {
     const client = this.findPublicUserById(feedback.clientUserId);
 
     if (!client) {
@@ -980,55 +1119,64 @@ export class PlatformDataService {
 
     if (uniqueIds.length === 0 || uniqueIds.length > 3) {
       throw new BadRequestException(
-        `${label} must contain from 1 to 3 tobaccos`,
+        `${label} should contain from 1 to 3 tobaccos`,
       );
     }
 
     uniqueIds.forEach((tobaccoId) => {
-      const tobacco = this.tobaccos.find((entry) => entry.id === tobaccoId);
-
-      if (!tobacco || !tobacco.isActive) {
-        throw new BadRequestException('Selected tobacco is not available');
+      if (!this.tobaccos.some((tobacco) => tobacco.id === tobaccoId)) {
+        throw new BadRequestException(`Unknown tobacco in ${label}`);
       }
     });
 
     return uniqueIds;
   }
 
-  private requireString(value: string | undefined, fieldName: string): string {
-    const normalized = value?.trim();
+  private requireString(
+    value: string | number | boolean | undefined,
+    label: string,
+  ): string {
+    if (typeof value !== 'string') {
+      throw new BadRequestException(`${label} must be a string`);
+    }
 
-    if (!normalized) {
-      throw new BadRequestException(`${fieldName} is required`);
+    const normalized = value.trim();
+
+    if (normalized.length === 0) {
+      throw new BadRequestException(`${label} must not be empty`);
     }
 
     return normalized;
   }
 
   private requireScaleValue(
-    value: number | undefined,
-    fieldName: string,
+    value: string | number | boolean | undefined,
+    label: string,
   ): number {
-    if (!value || value < 1 || value > 5) {
-      throw new BadRequestException(`${fieldName} must be between 1 and 5`);
+    if (typeof value !== 'number' || !Number.isInteger(value)) {
+      throw new BadRequestException(`${label} must be an integer`);
+    }
+
+    if (value < 1 || value > 5) {
+      throw new BadRequestException(`${label} must be between 1 and 5`);
     }
 
     return value;
   }
 
   private requirePositiveNumber(
-    value: number | undefined,
-    fieldName: string,
+    value: string | number | boolean | undefined,
+    label: string,
   ): number {
-    if (value === undefined || value <= 0) {
-      throw new BadRequestException(`${fieldName} must be positive`);
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new BadRequestException(`${label} must be a positive number`);
     }
 
     return value;
   }
 
   private requireBowlType(
-    value: string | undefined,
+    value: UpsertReferencePayload['bowlType'],
   ): BowlReference['bowlType'] {
     if (
       value !== 'phunnel' &&
@@ -1043,7 +1191,7 @@ export class PlatformDataService {
   }
 
   private requireCapacityBucket(
-    value: string | undefined,
+    value: UpsertReferencePayload['capacityBucket'],
   ): BowlReference['capacityBucket'] {
     if (
       value !== 'bucket' &&
@@ -1059,11 +1207,15 @@ export class PlatformDataService {
   }
 
   private normalizeOptionalValue(
-    value: string | undefined,
+    value: string | number | boolean | undefined,
   ): string | undefined {
-    const normalized = value?.trim();
+    if (typeof value !== 'string') {
+      return undefined;
+    }
 
-    return normalized ? normalized : undefined;
+    const normalized = value.trim();
+
+    return normalized.length > 0 ? normalized : undefined;
   }
 
   private seedReferences(): void {
@@ -1072,66 +1224,44 @@ export class PlatformDataService {
         id: randomUUID(),
         brand: 'Darkside',
         line: 'Core',
-        flavorName: 'Supernova',
-        lineStrengthLevel: 4,
-        estimatedStrengthLevel: 5,
-        brightnessLevel: 4,
-        flavorDescription: 'Icy mint with a long cooling finish.',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        brand: 'Darkside',
-        line: 'Shot',
         flavorName: 'Bounty Hunter',
-        lineStrengthLevel: 5,
-        estimatedStrengthLevel: 5,
+        lineStrengthLevel: 4,
+        estimatedStrengthLevel: 4,
         brightnessLevel: 3,
-        flavorDescription: 'Dense chocolate-coconut dessert profile.',
+        flavorDescription: 'Шоколадно-кокосовый десертный вкус.',
         isActive: true,
       },
       {
         id: randomUUID(),
-        brand: 'Musthave',
+        brand: 'Must Have',
         line: 'Classic',
-        flavorName: 'Kiwi Smoothie',
+        flavorName: 'Pinkman',
         lineStrengthLevel: 3,
         estimatedStrengthLevel: 3,
-        brightnessLevel: 3,
-        flavorDescription: 'Sweet kiwi and creamy smoothie texture.',
+        brightnessLevel: 5,
+        flavorDescription: 'Яркий ягодный микс с цитрусовой свежестью.',
         isActive: true,
       },
       {
         id: randomUUID(),
         brand: 'Black Burn',
-        line: 'Classic',
-        flavorName: 'Pear Lemonade',
+        line: 'Base',
+        flavorName: 'Mint Shock',
         lineStrengthLevel: 4,
         estimatedStrengthLevel: 4,
-        brightnessLevel: 5,
-        flavorDescription: 'Bright pear with sparkling lemonade vibe.',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        brand: 'Sebero',
-        line: 'Black',
-        flavorName: 'Raspberry Yogurt',
-        lineStrengthLevel: 3,
-        estimatedStrengthLevel: 2,
         brightnessLevel: 4,
-        flavorDescription: 'Soft raspberry dessert with yogurt acidity.',
+        flavorDescription: 'Мощная мята с выраженным холодком.',
         isActive: true,
       },
       {
         id: randomUUID(),
-        brand: 'Daily Hookah',
-        line: 'Classic',
-        flavorName: 'Mango Garden',
+        brand: 'Element',
+        line: 'Water',
+        flavorName: 'Pear Lemonade',
         lineStrengthLevel: 2,
         estimatedStrengthLevel: 2,
-        brightnessLevel: 5,
-        flavorDescription: 'Juicy tropical mango with floral lift.',
+        brightnessLevel: 4,
+        flavorDescription: 'Сладкая груша с лимонадным профилем.',
         isActive: true,
       },
     );
@@ -1147,8 +1277,8 @@ export class PlatformDataService {
       },
       {
         id: randomUUID(),
-        manufacturer: 'Union Hookah',
-        name: 'Sleek Mini',
+        manufacturer: 'MattPear',
+        name: 'Simple M',
         innerDiameterMm: 11,
         hasDiffuser: false,
         isActive: true,
@@ -1158,19 +1288,19 @@ export class PlatformDataService {
     this.bowls.push(
       {
         id: randomUUID(),
-        manufacturer: 'Cosmo Bowl',
-        name: 'Turkish Phunnel M',
-        bowlType: 'phunnel',
-        material: 'clay',
+        manufacturer: 'Werkbund',
+        name: 'Turkish Killer',
+        bowlType: 'killer',
+        material: 'Глина',
         capacityBucket: 'medium',
         isActive: true,
       },
       {
         id: randomUUID(),
-        manufacturer: 'Moonrave',
-        name: 'Killer One',
-        bowlType: 'killer',
-        material: 'stone',
+        manufacturer: 'Voskurimsya',
+        name: 'Phunnel One',
+        bowlType: 'phunnel',
+        material: 'Фарфор',
         capacityBucket: 'small',
         isActive: true,
       },
@@ -1179,18 +1309,18 @@ export class PlatformDataService {
     this.kalauds.push(
       {
         id: randomUUID(),
-        manufacturer: 'Kaloud',
-        name: 'Lotus I+',
-        material: 'aluminum',
-        color: 'black',
+        manufacturer: 'Na Grani',
+        name: 'HMD Pro',
+        material: 'Алюминий',
+        color: 'Черный',
         isActive: true,
       },
       {
         id: randomUUID(),
-        manufacturer: 'Na Grani',
-        name: 'Control 2.0',
-        material: 'stainless steel',
-        color: 'silver',
+        manufacturer: 'Conceptic',
+        name: 'Heat Keeper',
+        material: 'Сталь',
+        color: 'Серебристый',
         isActive: true,
       },
     );
@@ -1198,16 +1328,16 @@ export class PlatformDataService {
     this.charcoals.push(
       {
         id: randomUUID(),
-        manufacturer: 'CocoLoco',
+        manufacturer: 'CocoUrth',
         name: 'Cube',
-        sizeLabel: '25mm',
+        sizeLabel: '25 мм',
         isActive: true,
       },
       {
         id: randomUUID(),
         manufacturer: 'Crown',
-        name: 'Flat',
-        sizeLabel: '26mm',
+        name: 'Big Cube',
+        sizeLabel: '26 мм',
         isActive: true,
       },
     );

@@ -14,6 +14,12 @@ export class RolesGuard implements CanActivate {
   constructor(private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
+
+    if (!request.user.isApproved) {
+      throw new ForbiddenException('User approval is required');
+    }
+
     const requiredRoles = this.reflector.getAllAndOverride<UserRole[]>(
       ROLES_KEY,
       [context.getHandler(), context.getClass()],
@@ -22,8 +28,6 @@ export class RolesGuard implements CanActivate {
     if (!requiredRoles || requiredRoles.length === 0) {
       return true;
     }
-
-    const request = context.switchToHttp().getRequest<AuthenticatedRequest>();
 
     if (!requiredRoles.includes(request.user.role)) {
       throw new ForbiddenException('User has no access to this resource');

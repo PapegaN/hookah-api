@@ -51,6 +51,27 @@ export class DemoAuthService {
     return this.issueSession(createdUser.id);
   }
 
+  createUserByAdmin(
+    actorUserId: string,
+    input: {
+      login: string;
+      password: string;
+      role: UserRole;
+      email?: string;
+      telegramUsername?: string;
+      isApproved?: boolean;
+    },
+  ): AppUser {
+    return this.platformDataService.createUserByAdmin(actorUserId, {
+      login: input.login,
+      passwordHash: this.hashPassword(input.password),
+      role: input.role,
+      email: input.email,
+      telegramUsername: input.telegramUsername,
+      isApproved: input.isApproved ?? true,
+    });
+  }
+
   getUserByToken(token: string): AppUser | undefined {
     const userId = this.sessions.get(token);
 

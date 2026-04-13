@@ -14,9 +14,15 @@ export enum OrderStatus {
 export enum OrderTimelineEventType {
   Created = 'created',
   ParticipantJoined = 'participant_joined',
+  ParticipantTableApproved = 'participant_table_approved',
   Started = 'started',
   Delivered = 'delivered',
   FeedbackReceived = 'feedback_received',
+}
+
+export enum TableApprovalStatus {
+  Pending = 'pending',
+  Approved = 'approved',
 }
 
 export enum ReferenceEntityType {
@@ -33,12 +39,21 @@ export interface AppUser {
   role: UserRole;
   email: string | undefined;
   telegramUsername: string | undefined;
+  isApproved: boolean;
+  approvedAt: string | undefined;
+  approvedBy:
+    | {
+        id: string;
+        login: string;
+      }
+    | undefined;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface StoredUser extends AppUser {
+export interface StoredUser extends Omit<AppUser, 'approvedBy'> {
   passwordHash: string;
+  approvedByUserId: string | undefined;
 }
 
 export interface TobaccoReference {
@@ -109,6 +124,9 @@ export interface OrderParticipantRecord {
   description: string;
   requestedTobaccoIds: string[];
   joinedAt: string;
+  tableApprovalStatus: TableApprovalStatus;
+  tableApprovedAt: string | undefined;
+  tableApprovedByUserId: string | undefined;
   feedback: OrderFeedbackRecord | undefined;
 }
 
@@ -148,6 +166,14 @@ export interface OrderParticipantView {
   description: string;
   joinedAt: string;
   requestedTobaccos: TobaccoReference[];
+  tableApprovalStatus: TableApprovalStatus;
+  tableApprovedAt: string | undefined;
+  tableApprovedBy:
+    | {
+        id: string;
+        login: string;
+      }
+    | undefined;
   feedback: OrderFeedbackView | undefined;
 }
 

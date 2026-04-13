@@ -10,6 +10,7 @@ interface LoginResponseBody {
     id: string;
     login: string;
     role: string;
+    isApproved: boolean;
   };
 }
 
@@ -25,6 +26,7 @@ interface OrderResponseBody {
     client: {
       login: string;
     };
+    tableApprovalStatus: string;
     feedback?: {
       ratingScore: number;
       submittedAt: string;
@@ -147,6 +149,16 @@ describe('API (e2e)', () => {
     const secondClientBody =
       secondClientRegisterResponse.body as LoginResponseBody;
 
+    expect(secondClientBody.user.isApproved).toBe(false);
+
+    await request(httpServer)
+      .patch(`/api/v1/users/${secondClientBody.user.id}`)
+      .set('Authorization', `Bearer ${adminBody.accessToken}`)
+      .send({
+        isApproved: true,
+      })
+      .expect(200);
+
     const secondOrderResponse = await request(httpServer)
       .post('/api/v1/orders')
       .set('Authorization', `Bearer ${secondClientBody.accessToken}`)
@@ -160,6 +172,9 @@ describe('API (e2e)', () => {
 
     expect(secondOrderBody.id).toBe(firstOrderBody.id);
     expect(secondOrderBody.participants).toHaveLength(2);
+    expect(secondOrderBody.participants[1]?.tableApprovalStatus).toBe(
+      'pending',
+    );
 
     const masterLoginResponse = await request(httpServer)
       .post('/api/v1/auth/login')
@@ -169,6 +184,19 @@ describe('API (e2e)', () => {
       })
       .expect(201);
     const masterBody = masterLoginResponse.body as LoginResponseBody;
+
+    const approvedParticipantResponse = await request(httpServer)
+      .patch(
+        `/api/v1/orders/${firstOrderBody.id}/participants/${secondClientBody.user.id}/approve-table`,
+      )
+      .set('Authorization', `Bearer ${masterBody.accessToken}`)
+      .expect(200);
+    const approvedParticipantBody =
+      approvedParticipantResponse.body as OrderResponseBody;
+
+    expect(approvedParticipantBody.participants[1]?.tableApprovalStatus).toBe(
+      'approved',
+    );
 
     const startedOrderResponse = await request(httpServer)
       .patch(`/api/v1/orders/${firstOrderBody.id}/start`)
