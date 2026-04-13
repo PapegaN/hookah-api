@@ -34,6 +34,17 @@ npm run check
 
 Swagger будет доступен по адресу `http://localhost:3000/api/docs`.
 
+## Docker
+
+Собрать и запустить только backend:
+
+```bash
+docker build -t hookah-api .
+docker run --rm -p 3000:3000 -e PORT=3000 -e APP_ORIGIN=http://localhost:8080 -e DATABASE_URL=postgresql://hookah:hookah_local@host.docker.internal:5432/hookah hookah-api
+```
+
+Для совместного запуска с frontend и PostgreSQL используйте корневой `compose.yaml` в главном репозитории.
+
 ## Переменные окружения
 
 Скопируйте значения из `.env.example` и настройте:
