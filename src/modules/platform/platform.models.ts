@@ -39,11 +39,18 @@ export enum PackingStyle {
 
 export enum ReferenceEntityType {
   Tobaccos = 'tobaccos',
+  TobaccoTags = 'tobacco_tags',
   Hookahs = 'hookahs',
   Bowls = 'bowls',
   Kalauds = 'kalauds',
   Charcoals = 'charcoals',
   ElectricHeads = 'electric_heads',
+}
+
+export interface TobaccoTagReference {
+  id: string;
+  name: string;
+  isActive: boolean;
 }
 
 export interface AppUser {
@@ -78,6 +85,8 @@ export interface TobaccoReference {
   estimatedStrengthLevel: number;
   brightnessLevel: number;
   flavorDescription: string;
+  flavorTags: TobaccoTagReference[];
+  inStock: boolean;
   isActive: boolean;
 }
 
@@ -126,6 +135,7 @@ export interface ElectricHeadReference {
 
 export interface ReferencesSnapshot {
   tobaccos: TobaccoReference[];
+  tobaccoTags: TobaccoTagReference[];
   hookahs: HookahReference[];
   bowls: BowlReference[];
   kalauds: KalaudReference[];
@@ -182,6 +192,9 @@ export interface OrderParticipantRecord {
   clientUserId: string;
   description: string;
   requestedBlend: BlendComponentInput[];
+  wantsCooling: boolean;
+  wantsMint: boolean;
+  wantsSpicy: boolean;
   joinedAt: string;
   tableApprovalStatus: TableApprovalStatus;
   tableApprovedAt: string | undefined;
@@ -228,6 +241,9 @@ export interface OrderParticipantView {
   joinedAt: string;
   requestedBlend: OrderBlendComponentView[];
   requestedTobaccos: TobaccoReference[];
+  wantsCooling: boolean;
+  wantsMint: boolean;
+  wantsSpicy: boolean;
   tableApprovalStatus: TableApprovalStatus;
   tableApprovedAt: string | undefined;
   tableApprovedBy:
@@ -269,6 +285,23 @@ export interface OrderView {
   timeline: OrderTimelineEntryView[];
 }
 
+export interface BackupAuditEvent {
+  id: string;
+  actor:
+    | {
+        id: string;
+        login: string;
+      }
+    | undefined;
+  resourceName: string;
+  actionName: string;
+  schemaVersion: string;
+  checksumSha256: string;
+  itemCount: number;
+  details: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface UpsertReferencePayload {
   brand?: string;
   line?: string;
@@ -277,6 +310,8 @@ export interface UpsertReferencePayload {
   estimatedStrengthLevel?: number;
   brightnessLevel?: number;
   flavorDescription?: string;
+  flavorTags?: string[] | string;
+  inStock?: boolean;
   manufacturer?: string;
   name?: string;
   innerDiameterMm?: number;

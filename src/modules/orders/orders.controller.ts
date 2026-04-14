@@ -68,6 +68,9 @@ export class OrdersController {
         warmupMode: body.requestedSetup.warmupMode,
         warmupDurationMinutes: body.requestedSetup.warmupDurationMinutes,
       },
+      wantsCooling: body.wantsCooling ?? false,
+      wantsMint: body.wantsMint ?? false,
+      wantsSpicy: body.wantsSpicy ?? false,
     });
   }
 

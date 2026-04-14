@@ -1,4 +1,4 @@
-import {
+﻿import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -23,6 +23,7 @@ import type {
   OrderView,
   ReferencesSnapshot,
   StoredUser,
+  TobaccoTagReference,
   TobaccoReference,
   UpsertReferencePayload,
 } from './platform.models';
@@ -50,6 +51,7 @@ interface CreateUserInput {
 export class MemoryPlatformStore {
   private readonly users: StoredUser[] = [];
   private readonly tobaccos: TobaccoReference[] = [];
+  private readonly tobaccoTags: TobaccoTagReference[] = [];
   private readonly hookahs: HookahReference[] = [];
   private readonly bowls: BowlReference[] = [];
   private readonly kalauds: KalaudReference[] = [];
@@ -101,7 +103,7 @@ export class MemoryPlatformStore {
     const ts = new Date().toISOString();
     this.orders.push({
       id: randomUUID(),
-      tableLabel: 'Стол 3',
+      tableLabel: 'РЎС‚РѕР» 3',
       status: OrderStatus.New,
       createdAt: ts,
       updatedAt: ts,
@@ -127,11 +129,15 @@ export class MemoryPlatformStore {
       participants: [
         {
           clientUserId: client.id,
-          description: 'Хочу ягодный микс с холодком и мягкой крепостью.',
+          description:
+            'РҐРѕС‡Сѓ СЏРіРѕРґРЅС‹Р№ РјРёРєСЃ СЃ С…РѕР»РѕРґРєРѕРј Рё РјСЏРіРєРѕР№ РєСЂРµРїРѕСЃС‚СЊСЋ.',
           requestedBlend: [
             { tobaccoId: this.tobaccos[1]!.id, percentage: 70 },
             { tobaccoId: this.tobaccos[2]!.id, percentage: 30 },
           ],
+          wantsCooling: true,
+          wantsMint: false,
+          wantsSpicy: false,
           joinedAt: ts,
           tableApprovalStatus: TableApprovalStatus.Pending,
           tableApprovedAt: undefined,
@@ -145,7 +151,7 @@ export class MemoryPlatformStore {
           status: OrderStatus.New,
           occurredAt: ts,
           actorUserId: client.id,
-          note: 'Клиент создал заказ для стола 3.',
+          note: 'РљР»РёРµРЅС‚ СЃРѕР·РґР°Р» Р·Р°РєР°Р· РґР»СЏ СЃС‚РѕР»Р° 3.',
         }),
       ],
     });
@@ -230,6 +236,7 @@ export class MemoryPlatformStore {
   getReferencesSnapshot(): ReferencesSnapshot {
     return {
       tobaccos: [...this.tobaccos],
+      tobaccoTags: [...this.tobaccoTags],
       hookahs: [...this.hookahs],
       bowls: [...this.bowls],
       kalauds: [...this.kalauds],
@@ -243,6 +250,7 @@ export class MemoryPlatformStore {
     payload: UpsertReferencePayload,
   ):
     | TobaccoReference
+    | TobaccoTagReference
     | HookahReference
     | BowlReference
     | KalaudReference
@@ -251,6 +259,8 @@ export class MemoryPlatformStore {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
         return this.createTobacco(payload);
+      case ReferenceEntityType.TobaccoTags:
+        return this.createTobaccoTag(payload);
       case ReferenceEntityType.Hookahs:
         return this.createHookah(payload);
       case ReferenceEntityType.Bowls:
@@ -272,6 +282,7 @@ export class MemoryPlatformStore {
     payload: UpsertReferencePayload,
   ):
     | TobaccoReference
+    | TobaccoTagReference
     | HookahReference
     | BowlReference
     | KalaudReference
@@ -280,6 +291,8 @@ export class MemoryPlatformStore {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
         return this.updateTobacco(id, payload);
+      case ReferenceEntityType.TobaccoTags:
+        return this.updateTobaccoTag(id, payload);
       case ReferenceEntityType.Hookahs:
         return this.updateHookah(id, payload);
       case ReferenceEntityType.Bowls:
@@ -333,6 +346,9 @@ export class MemoryPlatformStore {
       description: string;
       requestedBlend: BlendComponentInput[];
       requestedSetup: OrderSetupInput;
+      wantsCooling: boolean;
+      wantsMint: boolean;
+      wantsSpicy: boolean;
     },
   ): OrderView {
     const client = this.findStoredUserById(clientUserId);
@@ -348,6 +364,9 @@ export class MemoryPlatformStore {
         input.requestedBlend,
         'requested blend',
       ),
+      wantsCooling: input.wantsCooling,
+      wantsMint: input.wantsMint,
+      wantsSpicy: input.wantsSpicy,
       joinedAt: new Date().toISOString(),
       tableApprovalStatus: TableApprovalStatus.Pending,
       tableApprovedAt: undefined,
@@ -388,7 +407,7 @@ export class MemoryPlatformStore {
           status: OrderStatus.New,
           occurredAt: timestamp,
           actorUserId: clientUserId,
-          note: `${client.login} создал заказ для стола ${tableLabel}.`,
+          note: `${client.login} СЃРѕР·РґР°Р» Р·Р°РєР°Р· РґР»СЏ СЃС‚РѕР»Р° ${tableLabel}.`,
         }),
       ],
     };
@@ -486,6 +505,8 @@ export class MemoryPlatformStore {
     switch (resource) {
       case ReferenceEntityType.Tobaccos:
         return this.getReferencesSnapshot().tobaccos;
+      case ReferenceEntityType.TobaccoTags:
+        return this.getReferencesSnapshot().tobaccoTags;
       case ReferenceEntityType.Hookahs:
         return this.getReferencesSnapshot().hookahs;
       case ReferenceEntityType.Bowls:
@@ -605,6 +626,8 @@ export class MemoryPlatformStore {
         payload.flavorDescription,
         'flavorDescription',
       ),
+      flavorTags: this.resolveTobaccoTags(payload.flavorTags),
+      inStock: payload.inStock ?? true,
       isActive: payload.isActive ?? true,
     };
     this.tobaccos.unshift(item);
@@ -642,6 +665,32 @@ export class MemoryPlatformStore {
         payload.flavorDescription,
         'flavorDescription',
       );
+    if (payload.flavorTags !== undefined)
+      item.flavorTags = this.resolveTobaccoTags(payload.flavorTags);
+    if (payload.inStock !== undefined) item.inStock = payload.inStock;
+    if (payload.isActive !== undefined) item.isActive = payload.isActive;
+    return item;
+  }
+
+  private createTobaccoTag(
+    payload: UpsertReferencePayload,
+  ): TobaccoTagReference {
+    const item: TobaccoTagReference = {
+      id: randomUUID(),
+      name: this.requireString(payload.name, 'name'),
+      isActive: payload.isActive ?? true,
+    };
+    this.tobaccoTags.unshift(item);
+    return item;
+  }
+
+  private updateTobaccoTag(
+    id: string,
+    payload: UpsertReferencePayload,
+  ): TobaccoTagReference {
+    const item = this.findReferenceById(this.tobaccoTags, id, 'Tobacco tag');
+    if (payload.name !== undefined)
+      item.name = this.requireString(payload.name, 'name');
     if (payload.isActive !== undefined) item.isActive = payload.isActive;
     return item;
   }
@@ -866,6 +915,9 @@ export class MemoryPlatformStore {
         joinedAt: participant.joinedAt,
         requestedBlend,
         requestedTobaccos: requestedBlend.map((entry) => entry.tobacco),
+        wantsCooling: participant.wantsCooling,
+        wantsMint: participant.wantsMint,
+        wantsSpicy: participant.wantsSpicy,
         tableApprovalStatus: participant.tableApprovalStatus,
         tableApprovedAt: participant.tableApprovedAt,
         tableApprovedBy: participant.tableApprovedByUserId
@@ -1102,7 +1154,38 @@ export class MemoryPlatformStore {
     return normalized.length > 0 ? normalized : undefined;
   }
 
+  private resolveTobaccoTags(
+    input: string[] | string | undefined,
+  ): TobaccoTagReference[] {
+    const names = Array.isArray(input)
+      ? input
+      : typeof input === 'string'
+        ? input
+            .split(',')
+            .map((item) => item.trim())
+            .filter((item) => item.length > 0)
+        : [];
+
+    return this.tobaccoTags.filter((tag) => names.includes(tag.name));
+  }
+
   private seedReferences(): void {
+    this.tobaccoTags.push({
+      id: randomUUID(),
+      name: 'РњСЏС‚РЅС‹Р№',
+      isActive: true,
+    });
+    this.tobaccoTags.push({
+      id: randomUUID(),
+      name: 'РЇРіРѕРґРЅС‹Р№',
+      isActive: true,
+    });
+    this.tobaccoTags.push({
+      id: randomUUID(),
+      name: 'Р¤СЂСѓРєС‚РѕРІС‹Р№',
+      isActive: true,
+    });
+
     this.tobaccos.push({
       id: randomUUID(),
       brand: 'Darkside',
@@ -1111,7 +1194,10 @@ export class MemoryPlatformStore {
       lineStrengthLevel: 4,
       estimatedStrengthLevel: 4,
       brightnessLevel: 3,
-      flavorDescription: 'Шоколадно-кокосовый десертный вкус.',
+      flavorDescription:
+        'РЁРѕРєРѕР»Р°РґРЅРѕ-РєРѕРєРѕСЃРѕРІС‹Р№ РґРµСЃРµСЂС‚РЅС‹Р№ РІРєСѓСЃ.',
+      flavorTags: [],
+      inStock: true,
       isActive: true,
     });
     this.tobaccos.push({
@@ -1122,7 +1208,12 @@ export class MemoryPlatformStore {
       lineStrengthLevel: 3,
       estimatedStrengthLevel: 3,
       brightnessLevel: 5,
-      flavorDescription: 'Яркий ягодный микс с цитрусовой свежестью.',
+      flavorDescription:
+        'РЇСЂРєРёР№ СЏРіРѕРґРЅС‹Р№ РјРёРєСЃ СЃ С†РёС‚СЂСѓСЃРѕРІРѕР№ СЃРІРµР¶РµСЃС‚СЊСЋ.',
+      flavorTags: this.tobaccoTags.filter((tag) =>
+        ['РЇРіРѕРґРЅС‹Р№', 'Р¤СЂСѓРєС‚РѕРІС‹Р№'].includes(tag.name),
+      ),
+      inStock: true,
       isActive: true,
     });
     this.tobaccos.push({
@@ -1133,7 +1224,10 @@ export class MemoryPlatformStore {
       lineStrengthLevel: 4,
       estimatedStrengthLevel: 4,
       brightnessLevel: 4,
-      flavorDescription: 'Мощная мята с выраженным холодком.',
+      flavorDescription:
+        'РњРѕС‰РЅР°СЏ РјСЏС‚Р° СЃ РІС‹СЂР°Р¶РµРЅРЅС‹Рј С…РѕР»РѕРґРєРѕРј.',
+      flavorTags: this.tobaccoTags.filter((tag) => tag.name === 'РњСЏС‚РЅС‹Р№'),
+      inStock: true,
       isActive: true,
     });
     this.hookahs.push({
@@ -1149,7 +1243,7 @@ export class MemoryPlatformStore {
       manufacturer: 'Werkbund',
       name: 'Turkish Killer',
       bowlType: 'killer',
-      material: 'Глина',
+      material: 'Р“Р»РёРЅР°',
       capacityBucket: 'medium',
       isActive: true,
     });
@@ -1157,15 +1251,15 @@ export class MemoryPlatformStore {
       id: randomUUID(),
       manufacturer: 'Na Grani',
       name: 'HMD Pro',
-      material: 'Алюминий',
-      color: 'Чёрный',
+      material: 'РђР»СЋРјРёРЅРёР№',
+      color: 'Р§С‘СЂРЅС‹Р№',
       isActive: true,
     });
     this.charcoals.push({
       id: randomUUID(),
       manufacturer: 'CocoUrth',
       name: 'Cube',
-      sizeLabel: '25 мм',
+      sizeLabel: '25 РјРј',
       isActive: true,
     });
     this.electricHeads.push({

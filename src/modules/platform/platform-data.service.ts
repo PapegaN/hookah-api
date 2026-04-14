@@ -3,6 +3,7 @@ import { DatabaseService } from '../database/database.service';
 import { MemoryPlatformStore } from './memory-platform.store';
 import type {
   AppUser,
+  BackupAuditEvent,
   BowlReference,
   CharcoalReference,
   ElectricHeadReference,
@@ -12,6 +13,7 @@ import type {
   OrderView,
   ReferencesSnapshot,
   StoredUser,
+  TobaccoTagReference,
   TobaccoReference,
   BlendComponentInput,
   UpsertReferencePayload,
@@ -118,6 +120,7 @@ export class PlatformDataService {
     payload: UpsertReferencePayload,
   ): Promise<
     | TobaccoReference
+    | TobaccoTagReference
     | HookahReference
     | BowlReference
     | KalaudReference
@@ -135,6 +138,7 @@ export class PlatformDataService {
     payload: UpsertReferencePayload,
   ): Promise<
     | TobaccoReference
+    | TobaccoTagReference
     | HookahReference
     | BowlReference
     | KalaudReference
@@ -168,6 +172,9 @@ export class PlatformDataService {
       description: string;
       requestedBlend: BlendComponentInput[];
       requestedSetup: OrderSetupInput;
+      wantsCooling: boolean;
+      wantsMint: boolean;
+      wantsSpicy: boolean;
     },
   ): Promise<OrderView> {
     return this.databaseService.isEnabled()
@@ -232,7 +239,12 @@ export class PlatformDataService {
   }
 
   async exportResource(
-    resource: 'users' | 'orders' | 'backup' | ReferenceEntityType,
+    resource:
+      | 'users'
+      | 'orders'
+      | 'backup'
+      | 'backup_audit'
+      | ReferenceEntityType,
   ): Promise<unknown> {
     return this.databaseService.isEnabled()
       ? await this.postgresPlatformStore.exportResource(resource)
@@ -240,7 +252,12 @@ export class PlatformDataService {
   }
 
   async importResource(
-    resource: 'users' | 'orders' | 'backup' | ReferenceEntityType,
+    resource:
+      | 'users'
+      | 'orders'
+      | 'backup'
+      | 'backup_audit'
+      | ReferenceEntityType,
     payload: unknown,
   ): Promise<{ importedCount: number }> {
     return this.databaseService.isEnabled()
@@ -267,5 +284,11 @@ export class PlatformDataService {
             updatedAt: new Date(0).toISOString(),
           }),
         };
+  }
+
+  async listBackupAuditEvents(): Promise<BackupAuditEvent[]> {
+    return this.databaseService.isEnabled()
+      ? await this.postgresPlatformStore.listBackupAuditEvents()
+      : [];
   }
 }

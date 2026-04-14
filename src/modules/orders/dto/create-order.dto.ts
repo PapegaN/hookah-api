@@ -5,6 +5,7 @@ import {
   IsEnum,
   IsInt,
   IsNumber,
+  IsBoolean,
   IsOptional,
   IsString,
   Max,
@@ -119,4 +120,19 @@ export class CreateOrderDto {
   @ValidateNested()
   @Type(() => RequestedSetupDto)
   requestedSetup!: RequestedSetupDto;
+
+  @ApiProperty({ required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  wantsCooling?: boolean;
+
+  @ApiProperty({ required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  wantsMint?: boolean;
+
+  @ApiProperty({ required: false, default: false })
+  @IsOptional()
+  @IsBoolean()
+  wantsSpicy?: boolean;
 }

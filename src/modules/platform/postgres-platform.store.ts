@@ -10,6 +10,7 @@ import {
 } from '../database/database.service';
 import type {
   AppUser,
+  BackupAuditEvent,
   BowlReference,
   CharcoalReference,
   ElectricHeadReference,
@@ -24,6 +25,7 @@ import type {
   OrderView,
   ReferencesSnapshot,
   StoredUser,
+  TobaccoTagReference,
   TobaccoReference,
   UpsertReferencePayload,
 } from './platform.models';
@@ -215,18 +217,27 @@ export class PostgresPlatformStore {
   }
 
   async getReferencesSnapshot(): Promise<ReferencesSnapshot> {
-    const [tobaccos, hookahs, bowls, kalauds, charcoals, electricHeads] =
-      await Promise.all([
-        this.listTobaccos(),
-        this.listHookahs(),
-        this.listBowls(),
-        this.listKalauds(),
-        this.listCharcoals(),
-        this.listElectricHeads(),
-      ]);
+    const [
+      tobaccos,
+      tobaccoTags,
+      hookahs,
+      bowls,
+      kalauds,
+      charcoals,
+      electricHeads,
+    ] = await Promise.all([
+      this.listTobaccos(),
+      this.listTobaccoTags(),
+      this.listHookahs(),
+      this.listBowls(),
+      this.listKalauds(),
+      this.listCharcoals(),
+      this.listElectricHeads(),
+    ]);
 
     return {
       tobaccos,
+      tobaccoTags,
       hookahs,
       bowls,
       kalauds,
@@ -240,6 +251,7 @@ export class PostgresPlatformStore {
     payload: UpsertReferencePayload,
   ): Promise<
     | TobaccoReference
+    | TobaccoTagReference
     | HookahReference
     | BowlReference
     | KalaudReference
@@ -249,6 +261,8 @@ export class PostgresPlatformStore {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
         return this.createTobacco(payload);
+      case ReferenceEntityType.TobaccoTags:
+        return this.createTobaccoTag(payload);
       case ReferenceEntityType.Hookahs:
         return this.createHookah(payload);
       case ReferenceEntityType.Bowls:
@@ -270,6 +284,7 @@ export class PostgresPlatformStore {
     payload: UpsertReferencePayload,
   ): Promise<
     | TobaccoReference
+    | TobaccoTagReference
     | HookahReference
     | BowlReference
     | KalaudReference
@@ -279,6 +294,8 @@ export class PostgresPlatformStore {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
         return this.updateTobacco(id, payload);
+      case ReferenceEntityType.TobaccoTags:
+        return this.updateTobaccoTag(id, payload);
       case ReferenceEntityType.Hookahs:
         return this.updateHookah(id, payload);
       case ReferenceEntityType.Bowls:
@@ -340,6 +357,9 @@ export class PostgresPlatformStore {
       description: string;
       requestedBlend: Array<{ tobaccoId: string; percentage: number }>;
       requestedSetup: OrderSetupInput;
+      wantsCooling: boolean;
+      wantsMint: boolean;
+      wantsSpicy: boolean;
     },
   ): Promise<OrderView> {
     const client = await this.findStoredUserById(clientUserId);
@@ -402,11 +422,22 @@ export class PostgresPlatformStore {
               id,
               order_id,
               client_user_id,
-              description
+              description,
+              wants_cooling,
+              wants_mint,
+              wants_spicy
             )
-            values ($1, $2, $3, $4)
+            values ($1, $2, $3, $4, $5, $6, $7)
           `,
-            [participantId, existingOrderId, clientUserId, description],
+            [
+              participantId,
+              existingOrderId,
+              clientUserId,
+              description,
+              input.wantsCooling,
+              input.wantsMint,
+              input.wantsSpicy,
+            ],
           );
 
           await this.insertParticipantTobaccos(
@@ -493,11 +524,22 @@ export class PostgresPlatformStore {
             id,
             order_id,
             client_user_id,
-            description
+            description,
+            wants_cooling,
+            wants_mint,
+            wants_spicy
           )
-          values ($1, $2, $3, $4)
+          values ($1, $2, $3, $4, $5, $6, $7)
         `,
-          [participantId, createdOrderId, clientUserId, description],
+          [
+            participantId,
+            createdOrderId,
+            clientUserId,
+            description,
+            input.wantsCooling,
+            input.wantsMint,
+            input.wantsSpicy,
+          ],
         );
 
         await this.insertParticipantTobaccos(
@@ -912,7 +954,12 @@ export class PostgresPlatformStore {
   }
 
   async exportResource(
-    resource: 'users' | 'orders' | 'backup' | ReferenceEntityType,
+    resource:
+      | 'users'
+      | 'orders'
+      | 'backup'
+      | 'backup_audit'
+      | ReferenceEntityType,
   ): Promise<unknown> {
     switch (resource) {
       case 'users':
@@ -921,8 +968,12 @@ export class PostgresPlatformStore {
         return this.listAllOrders();
       case 'backup':
         return this.exportBackup();
+      case 'backup_audit':
+        return this.listBackupAuditEvents();
       case ReferenceEntityType.Tobaccos:
         return (await this.getReferencesSnapshot()).tobaccos;
+      case ReferenceEntityType.TobaccoTags:
+        return (await this.getReferencesSnapshot()).tobaccoTags;
       case ReferenceEntityType.Hookahs:
         return (await this.getReferencesSnapshot()).hookahs;
       case ReferenceEntityType.Bowls:
@@ -939,7 +990,12 @@ export class PostgresPlatformStore {
   }
 
   async importResource(
-    resource: 'users' | 'orders' | 'backup' | ReferenceEntityType,
+    resource:
+      | 'users'
+      | 'orders'
+      | 'backup'
+      | 'backup_audit'
+      | ReferenceEntityType,
     payload: unknown,
   ): Promise<ImportSummary> {
     switch (resource) {
@@ -949,7 +1005,10 @@ export class PostgresPlatformStore {
         return this.importOrders(payload);
       case 'backup':
         return this.importBackup(payload);
+      case 'backup_audit':
+        throw new BadRequestException('Backup audit log is read-only');
       case ReferenceEntityType.Tobaccos:
+      case ReferenceEntityType.TobaccoTags:
       case ReferenceEntityType.Hookahs:
       case ReferenceEntityType.Bowls:
       case ReferenceEntityType.Kalauds:
@@ -992,6 +1051,7 @@ export class PostgresPlatformStore {
         users.length +
         orders.length +
         references.tobaccos.length +
+        references.tobaccoTags.length +
         references.hookahs.length +
         references.bowls.length +
         references.kalauds.length +
@@ -1073,39 +1133,46 @@ export class PostgresPlatformStore {
     );
 
     const tobaccoId = randomUUID();
+    const tagIds = await this.resolveTobaccoTagIds(payload.flavorTags);
 
-    await this.databaseService.query(
-      `
-        insert into catalog.tobaccos (
-          id,
-          line_id,
-          code,
-          name,
-          flavor_profile,
-          flavor_description,
-          estimated_strength_level,
-          brightness_level,
-          is_active
-        )
-        values ($1, $2, $3, $4, '{}'::text[], $5, $6, $7, $8)
-      `,
-      [
-        tobaccoId,
-        lineId,
-        this.buildStableCode(
-          'tobacco',
-          `${brandName}:${lineName}:${flavorName}`,
-        ),
-        flavorName,
-        this.requireString(payload.flavorDescription, 'flavorDescription'),
-        this.requireScaleValue(
-          payload.estimatedStrengthLevel,
-          'estimatedStrengthLevel',
-        ),
-        this.requireScaleValue(payload.brightnessLevel, 'brightnessLevel'),
-        payload.isActive ?? true,
-      ],
-    );
+    await this.databaseService.withTransaction(async (transaction) => {
+      await transaction.query(
+        `
+          insert into catalog.tobaccos (
+            id,
+            line_id,
+            code,
+            name,
+            flavor_profile,
+            flavor_description,
+            estimated_strength_level,
+            brightness_level,
+            in_stock,
+            is_active
+          )
+          values ($1, $2, $3, $4, '{}'::text[], $5, $6, $7, $8, $9)
+        `,
+        [
+          tobaccoId,
+          lineId,
+          this.buildStableCode(
+            'tobacco',
+            `${brandName}:${lineName}:${flavorName}`,
+          ),
+          flavorName,
+          this.requireString(payload.flavorDescription, 'flavorDescription'),
+          this.requireScaleValue(
+            payload.estimatedStrengthLevel,
+            'estimatedStrengthLevel',
+          ),
+          this.requireScaleValue(payload.brightnessLevel, 'brightnessLevel'),
+          payload.inStock ?? true,
+          payload.isActive ?? true,
+        ],
+      );
+
+      await this.replaceTobaccoTags(transaction, tobaccoId, tagIds);
+    });
 
     return this.findTobaccoById(tobaccoId);
   }
@@ -1137,45 +1204,104 @@ export class PostgresPlatformStore {
       lineName,
       lineStrengthLevel,
     );
+    const tagIds =
+      payload.flavorTags !== undefined
+        ? await this.resolveTobaccoTagIds(payload.flavorTags)
+        : existing.flavorTags.map((tag) => tag.id);
+
+    await this.databaseService.withTransaction(async (transaction) => {
+      await transaction.query(
+        `
+          update catalog.tobaccos
+          set
+            line_id = $2,
+            code = $3,
+            name = $4,
+            flavor_description = $5,
+            estimated_strength_level = $6,
+            brightness_level = $7,
+            in_stock = $8,
+            is_active = $9
+          where id = $1
+        `,
+        [
+          id,
+          lineId,
+          this.buildStableCode(
+            'tobacco',
+            `${brandName}:${lineName}:${flavorName}`,
+          ),
+          flavorName,
+          payload.flavorDescription !== undefined
+            ? this.requireString(payload.flavorDescription, 'flavorDescription')
+            : existing.flavorDescription,
+          payload.estimatedStrengthLevel !== undefined
+            ? this.requireScaleValue(
+                payload.estimatedStrengthLevel,
+                'estimatedStrengthLevel',
+              )
+            : existing.estimatedStrengthLevel,
+          payload.brightnessLevel !== undefined
+            ? this.requireScaleValue(payload.brightnessLevel, 'brightnessLevel')
+            : existing.brightnessLevel,
+          payload.inStock ?? existing.inStock,
+          payload.isActive ?? existing.isActive,
+        ],
+      );
+
+      await this.replaceTobaccoTags(transaction, id, tagIds);
+    });
+
+    return this.findTobaccoById(id);
+  }
+
+  private async createTobaccoTag(
+    payload: UpsertReferencePayload,
+  ): Promise<TobaccoTagReference> {
+    const tagId = randomUUID();
+    const tagName = this.requireString(payload.name, 'name');
 
     await this.databaseService.query(
       `
-        update catalog.tobaccos
-        set
-          line_id = $2,
-          code = $3,
-          name = $4,
-          flavor_description = $5,
-          estimated_strength_level = $6,
-          brightness_level = $7,
-          is_active = $8
+        insert into catalog.tobacco_tags (id, code, name, is_active)
+        values ($1, $2, $3, $4)
+      `,
+      [
+        tagId,
+        this.buildStableCode('tobacco-tag', tagName),
+        tagName,
+        payload.isActive ?? true,
+      ],
+    );
+
+    return this.findTobaccoTagById(tagId);
+  }
+
+  private async updateTobaccoTag(
+    id: string,
+    payload: UpsertReferencePayload,
+  ): Promise<TobaccoTagReference> {
+    const existing = await this.findTobaccoTagById(id);
+    const name =
+      payload.name !== undefined
+        ? this.requireString(payload.name, 'name')
+        : existing.name;
+
+    await this.databaseService.query(
+      `
+        update catalog.tobacco_tags
+        set code = $2, name = $3, is_active = $4, updated_at = now()
         where id = $1
       `,
       [
         id,
-        lineId,
-        this.buildStableCode(
-          'tobacco',
-          `${brandName}:${lineName}:${flavorName}`,
-        ),
-        flavorName,
-        payload.flavorDescription !== undefined
-          ? this.requireString(payload.flavorDescription, 'flavorDescription')
-          : existing.flavorDescription,
-        payload.estimatedStrengthLevel !== undefined
-          ? this.requireScaleValue(
-              payload.estimatedStrengthLevel,
-              'estimatedStrengthLevel',
-            )
-          : existing.estimatedStrengthLevel,
-        payload.brightnessLevel !== undefined
-          ? this.requireScaleValue(payload.brightnessLevel, 'brightnessLevel')
-          : existing.brightnessLevel,
+        this.buildStableCode('tobacco-tag', name),
+        name,
         payload.isActive ?? existing.isActive,
       ],
     );
 
-    return this.findTobaccoById(id);
+    return this.findTobaccoTagById(id);
   }
 
   private async createHookah(
@@ -1538,6 +1664,45 @@ export class PostgresPlatformStore {
     return this.loadOrders(result.rows.map((row) => row.id as string));
   }
 
+  async listBackupAuditEvents(): Promise<BackupAuditEvent[]> {
+    const result = await this.databaseService.query(
+      `
+        select
+          audit.id::text as id,
+          audit.resource_name,
+          audit.action_name,
+          audit.schema_version,
+          audit.checksum_sha256,
+          audit.item_count,
+          audit.details,
+          audit.created_at,
+          actor.id::text as actor_id,
+          actor.login as actor_login
+        from support.backup_audit_events audit
+        left join auth.users actor on actor.id = audit.actor_user_id
+        order by audit.created_at desc
+        limit 100
+      `,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id as string,
+      actor: row.actor_id
+        ? {
+            id: row.actor_id as string,
+            login: row.actor_login as string,
+          }
+        : undefined,
+      resourceName: row.resource_name as string,
+      actionName: row.action_name as string,
+      schemaVersion: row.schema_version as string,
+      checksumSha256: row.checksum_sha256 as string,
+      itemCount: Number(row.item_count),
+      details: (row.details as Record<string, unknown> | null) ?? {},
+      createdAt: this.toIsoString(row.created_at),
+    }));
+  }
+
   private async loadOrders(orderIds: string[]): Promise<OrderView[]> {
     if (orderIds.length === 0) {
       return [];
@@ -1604,6 +1769,9 @@ export class PostgresPlatformStore {
           participant.id::text as id,
           participant.order_id::text as order_id,
           participant.description,
+          participant.wants_cooling,
+          participant.wants_mint,
+          participant.wants_spicy,
           participant.joined_at,
           participant.table_approval_status::text as table_approval_status,
           participant.table_approved_at,
@@ -1655,6 +1823,9 @@ export class PostgresPlatformStore {
         client,
         description: row.description as string,
         joinedAt: this.toIsoString(row.joined_at),
+        wantsCooling: Boolean(row.wants_cooling),
+        wantsMint: Boolean(row.wants_mint),
+        wantsSpicy: Boolean(row.wants_spicy),
         requestedBlend: requestedBlendByParticipant.get(row.id as string) ?? [],
         requestedTobaccos: (
           requestedBlendByParticipant.get(row.id as string) ?? []
@@ -1880,6 +2051,22 @@ export class PostgresPlatformStore {
     );
 
     return result.rows.map((row) => this.mapTobacco(row));
+  }
+
+  private async listTobaccoTags(): Promise<TobaccoTagReference[]> {
+    const result = await this.databaseService.query(
+      `
+        select id::text as id, name, is_active
+        from catalog.tobacco_tags
+        order by name asc
+      `,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id as string,
+      name: row.name as string,
+      isActive: Boolean(row.is_active),
+    }));
   }
 
   private async listHookahs(): Promise<HookahReference[]> {
@@ -2126,6 +2313,64 @@ export class PostgresPlatformStore {
     return lineResult.rows[0]!.id as string;
   }
 
+  private async resolveTobaccoTagIds(
+    input: string[] | string | undefined,
+  ): Promise<string[]> {
+    if (input === undefined) {
+      return [];
+    }
+
+    const tagNames = Array.isArray(input)
+      ? input
+      : input
+          .split(',')
+          .map((item) => item.trim())
+          .filter((item) => item.length > 0);
+
+    if (tagNames.length === 0) {
+      return [];
+    }
+
+    const result = await this.databaseService.query(
+      `
+        select id::text as id, name
+        from catalog.tobacco_tags
+        where lower(name) = any($1::text[])
+      `,
+      [tagNames.map((item) => item.toLowerCase())],
+    );
+
+    if (
+      (result.rowCount ?? 0) !==
+      new Set(tagNames.map((item) => item.toLowerCase())).size
+    ) {
+      throw new BadRequestException('Unknown tobacco tag in flavorTags');
+    }
+
+    return result.rows.map((row) => row.id as string);
+  }
+
+  private async replaceTobaccoTags(
+    transaction: Queryable,
+    tobaccoId: string,
+    tagIds: string[],
+  ): Promise<void> {
+    await transaction.query(
+      `delete from catalog.tobacco_tag_links where tobacco_id = $1`,
+      [tobaccoId],
+    );
+
+    for (const tagId of tagIds) {
+      await transaction.query(
+        `
+          insert into catalog.tobacco_tag_links (tobacco_id, tag_id)
+          values ($1, $2)
+        `,
+        [tobaccoId, tagId],
+      );
+    }
+  }
+
   private async insertParticipantTobaccos(
     transaction: Queryable,
     participantId: string,
@@ -2319,7 +2564,19 @@ export class PostgresPlatformStore {
     switch (resource) {
       case ReferenceEntityType.Tobaccos:
         for (const item of items as unknown as TobaccoReference[]) {
-          await this.createReference(resource, item);
+          await this.createReference(resource, {
+            ...item,
+            flavorTags: item.flavorTags.map((tag) => tag.name),
+          });
+          importedCount += 1;
+        }
+        break;
+      case ReferenceEntityType.TobaccoTags:
+        for (const item of items as unknown as TobaccoTagReference[]) {
+          await this.createReference(
+            resource,
+            item as unknown as UpsertReferencePayload,
+          );
           importedCount += 1;
         }
         break;
@@ -2460,18 +2717,24 @@ export class PostgresPlatformStore {
                 order_id,
                 client_user_id,
                 description,
+                wants_cooling,
+                wants_mint,
+                wants_spicy,
                 joined_at,
                 table_approval_status,
                 table_approved_at,
                 table_approved_by_user_id
               )
-              values ($1, $2, $3, $4, $5, $6, $7, $8)
+              values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
             `,
             [
               participantId,
               order.id,
               participant.client.id,
               participant.description,
+              participant.wantsCooling,
+              participant.wantsMint,
+              participant.wantsSpicy,
               participant.joinedAt,
               participant.tableApprovalStatus,
               participant.tableApprovedAt ?? null,
@@ -2589,12 +2852,18 @@ export class PostgresPlatformStore {
       await transaction.query(`delete from equipment.hookahs`);
       await transaction.query(`delete from equipment.bowls`);
       await transaction.query(`delete from equipment.manufacturers`);
+      await transaction.query(`delete from catalog.tobacco_tag_links`);
       await transaction.query(`delete from catalog.tobaccos`);
+      await transaction.query(`delete from catalog.tobacco_tags`);
       await transaction.query(`delete from catalog.product_lines`);
       await transaction.query(`delete from catalog.brands`);
       await transaction.query(`delete from auth.users`);
     });
     await this.importUsers(backup.users ?? []);
+    await this.importReferences(
+      ReferenceEntityType.TobaccoTags,
+      backup.references?.tobaccoTags ?? [],
+    );
     await this.importReferences(
       ReferenceEntityType.Tobaccos,
       backup.references?.tobaccos ?? [],
@@ -2630,6 +2899,7 @@ export class PostgresPlatformStore {
         (backup.users?.length ?? 0) +
         (backup.orders?.length ?? 0) +
         (backup.references?.tobaccos?.length ?? 0) +
+        (backup.references?.tobaccoTags?.length ?? 0) +
         (backup.references?.hookahs?.length ?? 0) +
         (backup.references?.bowls?.length ?? 0) +
         (backup.references?.kalauds?.length ?? 0) +
@@ -2645,6 +2915,7 @@ export class PostgresPlatformStore {
         (backup.users?.length ?? 0) +
         (backup.orders?.length ?? 0) +
         (backup.references?.tobaccos?.length ?? 0) +
+        (backup.references?.tobaccoTags?.length ?? 0) +
         (backup.references?.hookahs?.length ?? 0) +
         (backup.references?.bowls?.length ?? 0) +
         (backup.references?.kalauds?.length ?? 0) +
@@ -2684,8 +2955,35 @@ export class PostgresPlatformStore {
       coalesce(tobacco.estimated_strength_level, product_line.strength_level) as estimated_strength_level,
       coalesce(tobacco.brightness_level, 3) as brightness_level,
       coalesce(tobacco.flavor_description, '') as flavor_description,
+      tobacco.in_stock,
+      coalesce(
+        (
+          select jsonb_agg(
+            jsonb_build_object(
+              'id', tag.id::text,
+              'name', tag.name,
+              'isActive', tag.is_active
+            )
+            order by tag.name asc
+          )
+          from catalog.tobacco_tag_links tag_link
+          join catalog.tobacco_tags tag on tag.id = tag_link.tag_id
+          where tag_link.tobacco_id = tobacco.id
+        ),
+        '[]'::jsonb
+      ) as flavor_tags,
       tobacco.is_active
     `;
+  }
+
+  private async findTobaccoTagById(id: string): Promise<TobaccoTagReference> {
+    const tag = (await this.listTobaccoTags()).find((item) => item.id === id);
+
+    if (!tag) {
+      throw new NotFoundException('Tobacco tag not found');
+    }
+
+    return tag;
   }
 
   private mapStoredUser(row: Record<string, unknown>): StoredUser {
@@ -2773,6 +3071,14 @@ export class PostgresPlatformStore {
       estimatedStrengthLevel: Number(row.estimated_strength_level),
       brightnessLevel: Number(row.brightness_level),
       flavorDescription: row.flavor_description as string,
+      flavorTags: Array.isArray(row.flavor_tags)
+        ? (row.flavor_tags as Array<Record<string, unknown>>).map((tag) => ({
+            id: tag.id as string,
+            name: tag.name as string,
+            isActive: Boolean(tag.isActive),
+          }))
+        : [],
+      inStock: Boolean(row.in_stock),
       isActive: Boolean(row.is_active),
     };
   }

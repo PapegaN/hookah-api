@@ -6,7 +6,12 @@ import { RolesGuard } from '../auth/guards/roles.guard';
 import { PlatformDataService } from '../platform/platform-data.service';
 import { ReferenceEntityType, UserRole } from '../platform/platform.models';
 
-type SettingsResource = 'users' | 'orders' | 'backup' | ReferenceEntityType;
+type SettingsResource =
+  | 'users'
+  | 'orders'
+  | 'backup'
+  | 'backup_audit'
+  | ReferenceEntityType;
 
 @ApiTags('Settings')
 @ApiBearerAuth()
@@ -22,6 +27,14 @@ export class SettingsController {
   @Get('export/:resource')
   @ApiOperation({ summary: 'Экспортировать справочник или сущности в JSON' })
   async exportResource(@Param('resource') resource: SettingsResource) {
+    if (resource === 'backup_audit') {
+      return {
+        resource,
+        exportedAt: new Date().toISOString(),
+        data: await this.platformDataService.listBackupAuditEvents(),
+      };
+    }
+
     return {
       resource,
       exportedAt: new Date().toISOString(),
