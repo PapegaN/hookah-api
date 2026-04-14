@@ -51,7 +51,24 @@ export class OrdersController {
     @CurrentUser() user: AppUser,
     @Body() body: CreateOrderDto,
   ) {
-    return this.platformDataService.createOrder(user.id, body);
+    return this.platformDataService.createOrder(user.id, {
+      tableLabel: body.tableLabel,
+      description: body.description,
+      requestedBlend: body.requestedBlend,
+      requestedSetup: {
+        heatingSystemType: body.requestedSetup.heatingSystemType,
+        packingStyle: body.requestedSetup.packingStyle,
+        customPackingStyle: body.requestedSetup.customPackingStyle,
+        hookahId: body.requestedSetup.hookahId,
+        bowlId: body.requestedSetup.bowlId,
+        kalaudId: body.requestedSetup.kalaudId,
+        charcoalId: body.requestedSetup.charcoalId,
+        electricHeadId: body.requestedSetup.electricHeadId,
+        charcoalCount: body.requestedSetup.charcoalCount,
+        warmupMode: body.requestedSetup.warmupMode,
+        warmupDurationMinutes: body.requestedSetup.warmupDurationMinutes,
+      },
+    });
   }
 
   @Patch(':id/participants/:clientUserId/approve-table')
@@ -90,7 +107,20 @@ export class OrdersController {
     @Body() body: FulfillOrderDto,
   ) {
     return this.platformDataService.fulfillOrder(id, user.id, {
-      actualTobaccoIds: body.actualTobaccoIds,
+      actualBlend: body.actualBlend,
+      actualSetup: {
+        heatingSystemType: body.actualSetup.heatingSystemType,
+        packingStyle: body.actualSetup.packingStyle,
+        customPackingStyle: body.actualSetup.customPackingStyle,
+        hookahId: body.actualSetup.hookahId,
+        bowlId: body.actualSetup.bowlId,
+        kalaudId: body.actualSetup.kalaudId,
+        charcoalId: body.actualSetup.charcoalId,
+        electricHeadId: body.actualSetup.electricHeadId,
+        charcoalCount: body.actualSetup.charcoalCount,
+        warmupMode: body.actualSetup.warmupMode,
+        warmupDurationMinutes: body.actualSetup.warmupDurationMinutes,
+      },
       packingComment: body.packingComment ?? '',
     });
   }

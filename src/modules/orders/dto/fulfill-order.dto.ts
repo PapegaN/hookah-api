@@ -1,23 +1,109 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import {
-  ArrayMaxSize,
   ArrayMinSize,
   IsArray,
+  IsEnum,
+  IsInt,
+  IsNumber,
   IsOptional,
   IsString,
+  Max,
+  Min,
   MinLength,
+  ValidateNested,
 } from 'class-validator';
+import { Type } from 'class-transformer';
+import {
+  HeatingSystemType,
+  PackingStyle,
+} from '../../platform/platform.models';
+
+class BlendComponentDto {
+  @ApiProperty({ example: 'uuid-tobacco-1' })
+  @IsString()
+  tobaccoId!: string;
+
+  @ApiProperty({ example: 70 })
+  @IsNumber()
+  @Min(1)
+  @Max(100)
+  percentage!: number;
+}
+
+class ActualSetupDto {
+  @ApiProperty({ enum: HeatingSystemType, example: HeatingSystemType.Coal })
+  @IsEnum(HeatingSystemType)
+  heatingSystemType!: HeatingSystemType;
+
+  @ApiProperty({ enum: PackingStyle, required: false })
+  @IsOptional()
+  @IsEnum(PackingStyle)
+  packingStyle?: PackingStyle;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  customPackingStyle?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  hookahId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  bowlId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  kalaudId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  charcoalId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsString()
+  electricHeadId?: string;
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  charcoalCount?: number;
+
+  @ApiProperty({ required: false, enum: ['with_cap', 'without_cap'] })
+  @IsOptional()
+  @IsString()
+  warmupMode?: 'with_cap' | 'without_cap';
+
+  @ApiProperty({ required: false })
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  warmupDurationMinutes?: number;
+}
 
 export class FulfillOrderDto {
   @ApiProperty({
-    type: [String],
-    example: ['uuid-tobacco-1', 'uuid-tobacco-3'],
+    type: [BlendComponentDto],
   })
   @IsArray()
   @ArrayMinSize(1)
-  @ArrayMaxSize(3)
-  @IsString({ each: true })
-  actualTobaccoIds!: string[];
+  @ValidateNested({ each: true })
+  @Type(() => BlendComponentDto)
+  actualBlend!: BlendComponentDto[];
+
+  @ApiProperty({
+    type: ActualSetupDto,
+  })
+  @ValidateNested()
+  @Type(() => ActualSetupDto)
+  actualSetup!: ActualSetupDto;
 
   @ApiPropertyOptional({
     example:

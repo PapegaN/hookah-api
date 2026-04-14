@@ -25,12 +25,25 @@ export enum TableApprovalStatus {
   Approved = 'approved',
 }
 
+export enum HeatingSystemType {
+  Coal = 'coal',
+  Electric = 'electric',
+}
+
+export enum PackingStyle {
+  Layers = 'layers',
+  Sectors = 'sectors',
+  Kompot = 'kompot',
+  Custom = 'custom',
+}
+
 export enum ReferenceEntityType {
   Tobaccos = 'tobaccos',
   Hookahs = 'hookahs',
   Bowls = 'bowls',
   Kalauds = 'kalauds',
   Charcoals = 'charcoals',
+  ElectricHeads = 'electric_heads',
 }
 
 export interface AppUser {
@@ -104,12 +117,58 @@ export interface CharcoalReference {
   isActive: boolean;
 }
 
+export interface ElectricHeadReference {
+  id: string;
+  manufacturer: string;
+  name: string;
+  isActive: boolean;
+}
+
 export interface ReferencesSnapshot {
   tobaccos: TobaccoReference[];
   hookahs: HookahReference[];
   bowls: BowlReference[];
   kalauds: KalaudReference[];
   charcoals: CharcoalReference[];
+  electricHeads: ElectricHeadReference[];
+}
+
+export interface BlendComponentInput {
+  tobaccoId: string;
+  percentage: number;
+}
+
+export interface OrderBlendComponentView {
+  tobacco: TobaccoReference;
+  percentage: number;
+}
+
+export interface OrderSetupView {
+  heatingSystemType: HeatingSystemType;
+  packingStyle: PackingStyle | undefined;
+  customPackingStyle: string | undefined;
+  hookah: HookahReference | undefined;
+  bowl: BowlReference | undefined;
+  kalaud: KalaudReference | undefined;
+  charcoal: CharcoalReference | undefined;
+  electricHead: ElectricHeadReference | undefined;
+  charcoalCount: number | undefined;
+  warmupMode: 'with_cap' | 'without_cap' | undefined;
+  warmupDurationMinutes: number | undefined;
+}
+
+export interface OrderSetupInput {
+  heatingSystemType: HeatingSystemType;
+  packingStyle: PackingStyle | undefined;
+  customPackingStyle: string | undefined;
+  hookahId: string | undefined;
+  bowlId: string | undefined;
+  kalaudId: string | undefined;
+  charcoalId: string | undefined;
+  electricHeadId: string | undefined;
+  charcoalCount: number | undefined;
+  warmupMode: 'with_cap' | 'without_cap' | undefined;
+  warmupDurationMinutes: number | undefined;
 }
 
 export interface OrderFeedbackRecord {
@@ -122,7 +181,7 @@ export interface OrderFeedbackRecord {
 export interface OrderParticipantRecord {
   clientUserId: string;
   description: string;
-  requestedTobaccoIds: string[];
+  requestedBlend: BlendComponentInput[];
   joinedAt: string;
   tableApprovalStatus: TableApprovalStatus;
   tableApprovedAt: string | undefined;
@@ -148,7 +207,9 @@ export interface OrderRecord {
   deliveredAt: string | undefined;
   feedbackAt: string | undefined;
   acceptedByUserId: string | undefined;
-  actualTobaccoIds: string[] | undefined;
+  requestedSetup: OrderSetupView | undefined;
+  actualBlend: BlendComponentInput[] | undefined;
+  actualSetup: OrderSetupView | undefined;
   packingComment: string | undefined;
   participants: OrderParticipantRecord[];
   timeline: OrderTimelineEntryRecord[];
@@ -165,6 +226,7 @@ export interface OrderParticipantView {
   client: AppUser;
   description: string;
   joinedAt: string;
+  requestedBlend: OrderBlendComponentView[];
   requestedTobaccos: TobaccoReference[];
   tableApprovalStatus: TableApprovalStatus;
   tableApprovedAt: string | undefined;
@@ -195,8 +257,12 @@ export interface OrderView {
   deliveredAt: string | undefined;
   feedbackAt: string | undefined;
   acceptedBy: AppUser | undefined;
+  requestedSetup: OrderSetupView | undefined;
+  actualSetup: OrderSetupView | undefined;
   participants: OrderParticipantView[];
+  requestedBlend: OrderBlendComponentView[];
   requestedTobaccos: TobaccoReference[];
+  actualBlend: OrderBlendComponentView[];
   actualTobaccos: TobaccoReference[];
   packingComment: string | undefined;
   feedbacks: OrderFeedbackView[];

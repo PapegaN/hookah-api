@@ -3,17 +3,22 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type {
   AppUser,
+  BlendComponentInput,
   BowlReference,
   CharcoalReference,
+  ElectricHeadReference,
   HookahReference,
   KalaudReference,
+  OrderBlendComponentView,
   OrderFeedbackRecord,
   OrderFeedbackView,
   OrderParticipantRecord,
   OrderRecord,
+  OrderSetupInput,
+  OrderSetupView,
   OrderTimelineEntryRecord,
   OrderView,
   ReferencesSnapshot,
@@ -22,8 +27,10 @@ import type {
   UpsertReferencePayload,
 } from './platform.models';
 import {
+  HeatingSystemType,
   OrderStatus,
   OrderTimelineEventType,
+  PackingStyle,
   ReferenceEntityType,
   TableApprovalStatus,
   UserRole,
@@ -47,6 +54,7 @@ export class MemoryPlatformStore {
   private readonly bowls: BowlReference[] = [];
   private readonly kalauds: KalaudReference[] = [];
   private readonly charcoals: CharcoalReference[] = [];
+  private readonly electricHeads: ElectricHeadReference[] = [];
   private readonly orders: OrderRecord[] = [];
 
   constructor() {
@@ -71,7 +79,7 @@ export class MemoryPlatformStore {
       isApproved: true,
       approvedByUserId: undefined,
     });
-    const master = this.createUserRecord({
+    this.createUserRecord({
       login: 'master',
       passwordHash: hashes.master,
       role: UserRole.HookahMaster,
@@ -90,28 +98,41 @@ export class MemoryPlatformStore {
       approvedByUserId: admin.id,
     });
 
-    const timestamp = new Date().toISOString();
-
+    const ts = new Date().toISOString();
     this.orders.push({
       id: randomUUID(),
       tableLabel: 'Стол 3',
       status: OrderStatus.New,
-      createdAt: timestamp,
-      updatedAt: timestamp,
+      createdAt: ts,
+      updatedAt: ts,
       deliveredAt: undefined,
       feedbackAt: undefined,
       acceptedByUserId: undefined,
-      actualTobaccoIds: undefined,
+      requestedSetup: this.resolveSetupView({
+        heatingSystemType: HeatingSystemType.Coal,
+        packingStyle: PackingStyle.Kompot,
+        customPackingStyle: undefined,
+        hookahId: this.hookahs[0]?.id,
+        bowlId: this.bowls[0]?.id,
+        kalaudId: this.kalauds[0]?.id,
+        charcoalId: this.charcoals[0]?.id,
+        electricHeadId: undefined,
+        charcoalCount: 3,
+        warmupMode: 'with_cap',
+        warmupDurationMinutes: 6,
+      }),
+      actualBlend: undefined,
+      actualSetup: undefined,
       packingComment: undefined,
       participants: [
         {
           clientUserId: client.id,
           description: 'Хочу ягодный микс с холодком и мягкой крепостью.',
-          requestedTobaccoIds: [
-            this.tobaccos[0]?.id ?? '',
-            this.tobaccos[2]?.id ?? '',
-          ].filter((value) => value.length > 0),
-          joinedAt: timestamp,
+          requestedBlend: [
+            { tobaccoId: this.tobaccos[1]!.id, percentage: 70 },
+            { tobaccoId: this.tobaccos[2]!.id, percentage: 30 },
+          ],
+          joinedAt: ts,
           tableApprovalStatus: TableApprovalStatus.Pending,
           tableApprovedAt: undefined,
           tableApprovedByUserId: undefined,
@@ -122,16 +143,12 @@ export class MemoryPlatformStore {
         this.createTimelineEntry({
           type: OrderTimelineEventType.Created,
           status: OrderStatus.New,
-          occurredAt: timestamp,
+          occurredAt: ts,
           actorUserId: client.id,
           note: 'Клиент создал заказ для стола 3.',
         }),
       ],
     });
-
-    if (!master) {
-      throw new Error('Demo users must be initialized');
-    }
   }
 
   findStoredUserByLogin(login: string): StoredUser | undefined {
@@ -146,15 +163,11 @@ export class MemoryPlatformStore {
 
   findPublicUserById(id: string): AppUser | undefined {
     const user = this.findStoredUserById(id);
-
     return user ? this.toPublicUser(user) : undefined;
   }
 
   listUsers(): AppUser[] {
-    return this.users
-      .slice()
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .map((user) => this.toPublicUser(user));
+    return this.users.map((user) => this.toPublicUser(user));
   }
 
   registerClient(
@@ -188,81 +201,30 @@ export class MemoryPlatformStore {
       >
     >,
   ): AppUser {
-    const targetUser = this.findStoredUserById(userId);
-
-    if (!targetUser) {
+    const user = this.findStoredUserById(userId);
+    if (!user) {
       throw new NotFoundException('User not found');
     }
 
-    if (payload.login !== undefined) {
-      const normalizedLogin = this.requireString(payload.login, 'login');
-      const loginOwner = this.findStoredUserByLogin(normalizedLogin);
-
-      if (loginOwner && loginOwner.id !== userId) {
-        throw new BadRequestException('Login is already in use');
-      }
-
-      targetUser.login = normalizedLogin;
-    }
-
-    if (payload.role !== undefined) {
-      targetUser.role = payload.role;
-    }
-
-    if (payload.email !== undefined) {
-      const normalizedEmail = this.normalizeOptionalValue(payload.email);
-
-      if (
-        normalizedEmail &&
-        this.users.some(
-          (user) =>
-            user.id !== userId &&
-            user.email?.toLowerCase() === normalizedEmail.toLowerCase(),
-        )
-      ) {
-        throw new BadRequestException('Email is already in use');
-      }
-
-      targetUser.email = normalizedEmail;
-    }
-
-    if (payload.telegramUsername !== undefined) {
-      const normalizedTelegram = this.normalizeOptionalValue(
+    if (payload.login !== undefined)
+      user.login = this.requireString(payload.login, 'login');
+    if (payload.role !== undefined) user.role = payload.role;
+    if (payload.email !== undefined)
+      user.email = this.normalizeOptionalValue(payload.email);
+    if (payload.telegramUsername !== undefined)
+      user.telegramUsername = this.normalizeOptionalValue(
         payload.telegramUsername,
       );
-
-      if (
-        normalizedTelegram &&
-        this.users.some(
-          (user) =>
-            user.id !== userId &&
-            user.telegramUsername?.toLowerCase() ===
-              normalizedTelegram.toLowerCase(),
-        )
-      ) {
-        throw new BadRequestException('Telegram username is already in use');
-      }
-
-      targetUser.telegramUsername = normalizedTelegram;
-    }
-
     if (payload.isApproved !== undefined) {
-      const timestamp = new Date().toISOString();
-
-      if (payload.isApproved) {
-        targetUser.isApproved = true;
-        targetUser.approvedAt = timestamp;
-        targetUser.approvedByUserId = actorUserId;
-      } else {
-        targetUser.isApproved = false;
-        targetUser.approvedAt = undefined;
-        targetUser.approvedByUserId = undefined;
-      }
+      user.isApproved = payload.isApproved;
+      user.approvedAt = payload.isApproved
+        ? new Date().toISOString()
+        : undefined;
+      user.approvedByUserId = payload.isApproved ? actorUserId : undefined;
     }
+    user.updatedAt = new Date().toISOString();
 
-    targetUser.updatedAt = new Date().toISOString();
-
-    return this.toPublicUser(targetUser);
+    return this.toPublicUser(user);
   }
 
   getReferencesSnapshot(): ReferencesSnapshot {
@@ -272,6 +234,7 @@ export class MemoryPlatformStore {
       bowls: [...this.bowls],
       kalauds: [...this.kalauds],
       charcoals: [...this.charcoals],
+      electricHeads: [...this.electricHeads],
     };
   }
 
@@ -283,7 +246,8 @@ export class MemoryPlatformStore {
     | HookahReference
     | BowlReference
     | KalaudReference
-    | CharcoalReference {
+    | CharcoalReference
+    | ElectricHeadReference {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
         return this.createTobacco(payload);
@@ -295,6 +259,8 @@ export class MemoryPlatformStore {
         return this.createKalaud(payload);
       case ReferenceEntityType.Charcoals:
         return this.createCharcoal(payload);
+      case ReferenceEntityType.ElectricHeads:
+        return this.createElectricHead(payload);
       default:
         throw new BadRequestException('Unsupported reference type');
     }
@@ -309,7 +275,8 @@ export class MemoryPlatformStore {
     | HookahReference
     | BowlReference
     | KalaudReference
-    | CharcoalReference {
+    | CharcoalReference
+    | ElectricHeadReference {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
         return this.updateTobacco(id, payload);
@@ -321,6 +288,8 @@ export class MemoryPlatformStore {
         return this.updateKalaud(id, payload);
       case ReferenceEntityType.Charcoals:
         return this.updateCharcoal(id, payload);
+      case ReferenceEntityType.ElectricHeads:
+        return this.updateElectricHead(id, payload);
       default:
         throw new BadRequestException('Unsupported reference type');
     }
@@ -331,7 +300,7 @@ export class MemoryPlatformStore {
       return [];
     }
 
-    const visibleOrders =
+    const visible =
       currentUser.role === UserRole.Client
         ? this.orders.filter((order) =>
             order.participants.some(
@@ -340,15 +309,11 @@ export class MemoryPlatformStore {
           )
         : this.orders;
 
-    return visibleOrders
-      .slice()
-      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
-      .map((order) => this.toOrderView(order));
+    return visible.map((order) => this.toOrderView(order));
   }
 
   getOrderById(orderId: string, currentUser: AppUser): OrderView {
     const order = this.findOrder(orderId);
-
     if (
       currentUser.role === UserRole.Client &&
       !order.participants.some(
@@ -366,59 +331,43 @@ export class MemoryPlatformStore {
     input: {
       tableLabel: string;
       description: string;
-      requestedTobaccoIds: string[];
+      requestedBlend: BlendComponentInput[];
+      requestedSetup: OrderSetupInput;
     },
   ): OrderView {
     const client = this.findStoredUserById(clientUserId);
-
     if (!client || !client.isApproved) {
       throw new BadRequestException('Client approval is required');
     }
 
     const tableLabel = this.requireString(input.tableLabel, 'tableLabel');
-    const requestedTobaccoIds = this.validateTobaccoSelection(
-      input.requestedTobaccoIds,
-      'requested blend',
-    );
-    const timestamp = new Date().toISOString();
     const participant: OrderParticipantRecord = {
       clientUserId,
       description: this.requireString(input.description, 'description'),
-      requestedTobaccoIds,
-      joinedAt: timestamp,
+      requestedBlend: this.validateBlendSelection(
+        input.requestedBlend,
+        'requested blend',
+      ),
+      joinedAt: new Date().toISOString(),
       tableApprovalStatus: TableApprovalStatus.Pending,
       tableApprovedAt: undefined,
       tableApprovedByUserId: undefined,
       feedback: undefined,
     };
-    const openOrder = this.findOpenOrderForTable(tableLabel);
+    const existingOrder = this.orders.find(
+      (order) =>
+        order.tableLabel.toLowerCase() === tableLabel.toLowerCase() &&
+        (order.status === OrderStatus.New ||
+          order.status === OrderStatus.InProgress),
+    );
 
-    if (openOrder) {
-      if (
-        openOrder.participants.some(
-          (entry) => entry.clientUserId === participant.clientUserId,
-        )
-      ) {
-        throw new BadRequestException(
-          'Client already joined the active order for this table',
-        );
-      }
-
-      openOrder.participants.push(participant);
-      openOrder.updatedAt = timestamp;
-      openOrder.timeline.unshift(
-        this.createTimelineEntry({
-          type: OrderTimelineEventType.ParticipantJoined,
-          status: openOrder.status,
-          occurredAt: timestamp,
-          actorUserId: clientUserId,
-          note: `${client.login} присоединился к заказу стола ${tableLabel}.`,
-        }),
-      );
-
-      return this.toOrderView(openOrder);
+    if (existingOrder) {
+      existingOrder.participants.push(participant);
+      existingOrder.updatedAt = new Date().toISOString();
+      return this.toOrderView(existingOrder);
     }
 
+    const timestamp = new Date().toISOString();
     const order: OrderRecord = {
       id: randomUUID(),
       tableLabel,
@@ -428,7 +377,9 @@ export class MemoryPlatformStore {
       deliveredAt: undefined,
       feedbackAt: undefined,
       acceptedByUserId: undefined,
-      actualTobaccoIds: undefined,
+      requestedSetup: this.resolveSetupView(input.requestedSetup),
+      actualBlend: undefined,
+      actualSetup: undefined,
       packingComment: undefined,
       participants: [participant],
       timeline: [
@@ -441,9 +392,7 @@ export class MemoryPlatformStore {
         }),
       ],
     };
-
     this.orders.unshift(order);
-
     return this.toOrderView(order);
   }
 
@@ -456,97 +405,45 @@ export class MemoryPlatformStore {
     const participant = order.participants.find(
       (entry) => entry.clientUserId === clientUserId,
     );
-    const client = this.findStoredUserById(clientUserId);
-
-    if (!participant || !client) {
+    if (!participant) {
       throw new NotFoundException('Participant not found');
     }
 
-    if (participant.tableApprovalStatus === TableApprovalStatus.Approved) {
-      return this.toOrderView(order);
-    }
-
-    const timestamp = new Date().toISOString();
-
     participant.tableApprovalStatus = TableApprovalStatus.Approved;
-    participant.tableApprovedAt = timestamp;
+    participant.tableApprovedAt = new Date().toISOString();
     participant.tableApprovedByUserId = actorUserId;
-    order.updatedAt = timestamp;
-    order.timeline.unshift(
-      this.createTimelineEntry({
-        type: OrderTimelineEventType.ParticipantTableApproved,
-        status: order.status,
-        occurredAt: timestamp,
-        actorUserId,
-        note: `${client.login} подтверждён за ${order.tableLabel}.`,
-      }),
-    );
-
+    order.updatedAt = new Date().toISOString();
     return this.toOrderView(order);
   }
 
   startOrder(orderId: string, actorUserId: string): OrderView {
     const order = this.findOrder(orderId);
-
-    if (order.status !== OrderStatus.New) {
-      throw new BadRequestException('Only new orders can be taken into work');
-    }
-
-    const timestamp = new Date().toISOString();
-
     order.status = OrderStatus.InProgress;
     order.acceptedByUserId = actorUserId;
-    order.updatedAt = timestamp;
-    order.timeline.unshift(
-      this.createTimelineEntry({
-        type: OrderTimelineEventType.Started,
-        status: order.status,
-        occurredAt: timestamp,
-        actorUserId,
-        note: `Заказ для ${order.tableLabel} взят в работу.`,
-      }),
-    );
-
+    order.updatedAt = new Date().toISOString();
     return this.toOrderView(order);
   }
 
   fulfillOrder(
     orderId: string,
     actorUserId: string,
-    input: { actualTobaccoIds: string[]; packingComment: string },
+    input: {
+      actualBlend: BlendComponentInput[];
+      actualSetup: OrderSetupInput;
+      packingComment: string;
+    },
   ): OrderView {
     const order = this.findOrder(orderId);
-
-    if (
-      order.status !== OrderStatus.New &&
-      order.status !== OrderStatus.InProgress
-    ) {
-      throw new BadRequestException(
-        'Order cannot be fulfilled in current state',
-      );
-    }
-
-    const timestamp = new Date().toISOString();
-
     order.status = OrderStatus.ReadyForFeedback;
     order.acceptedByUserId = actorUserId;
-    order.actualTobaccoIds = this.validateTobaccoSelection(
-      input.actualTobaccoIds,
-      'actual packing',
+    order.actualBlend = this.validateBlendSelection(
+      input.actualBlend,
+      'actual blend',
     );
+    order.actualSetup = this.resolveSetupView(input.actualSetup);
     order.packingComment = this.normalizeOptionalValue(input.packingComment);
-    order.deliveredAt = timestamp;
-    order.updatedAt = timestamp;
-    order.timeline.unshift(
-      this.createTimelineEntry({
-        type: OrderTimelineEventType.Delivered,
-        status: order.status,
-        occurredAt: timestamp,
-        actorUserId,
-        note: `Заказ для ${order.tableLabel} отдан клиентам.`,
-      }),
-    );
-
+    order.deliveredAt = new Date().toISOString();
+    order.updatedAt = order.deliveredAt;
     return this.toOrderView(order);
   }
 
@@ -559,107 +456,135 @@ export class MemoryPlatformStore {
     const participant = order.participants.find(
       (entry) => entry.clientUserId === actor.id,
     );
-
     if (!participant) {
       throw new BadRequestException(
         'Client can leave feedback only for joined table order',
       );
     }
 
-    if (
-      order.status !== OrderStatus.ReadyForFeedback &&
-      order.status !== OrderStatus.Rated
-    ) {
-      throw new BadRequestException(
-        'Feedback is available only after order delivery',
-      );
-    }
-
-    if (participant.feedback) {
-      throw new BadRequestException('Feedback already exists for this client');
-    }
-
-    const timestamp = new Date().toISOString();
-
     participant.feedback = {
       clientUserId: actor.id,
       ratingScore: this.requireScaleValue(input.ratingScore, 'ratingScore'),
       ratingReview: this.normalizeOptionalValue(input.ratingReview),
-      submittedAt: timestamp,
+      submittedAt: new Date().toISOString(),
     };
-    order.feedbackAt = timestamp;
-    order.updatedAt = timestamp;
+    order.feedbackAt = participant.feedback.submittedAt;
     order.status = order.participants.every((entry) => entry.feedback)
       ? OrderStatus.Rated
       : OrderStatus.ReadyForFeedback;
-    order.timeline.unshift(
-      this.createTimelineEntry({
-        type: OrderTimelineEventType.FeedbackReceived,
-        status: order.status,
-        occurredAt: timestamp,
-        actorUserId: actor.id,
-        note: `${actor.login} оставил отзыв по заказу ${order.tableLabel}.`,
-      }),
-    );
-
+    order.updatedAt = order.feedbackAt;
     return this.toOrderView(order);
   }
 
+  async exportResource(
+    resource: 'users' | 'orders' | 'backup' | ReferenceEntityType,
+  ): Promise<unknown> {
+    if (resource === 'users') return this.users;
+    if (resource === 'orders')
+      return this.listOrdersForUser(this.systemAdmin());
+    if (resource === 'backup') return this.exportBackup();
+    switch (resource) {
+      case ReferenceEntityType.Tobaccos:
+        return this.getReferencesSnapshot().tobaccos;
+      case ReferenceEntityType.Hookahs:
+        return this.getReferencesSnapshot().hookahs;
+      case ReferenceEntityType.Bowls:
+        return this.getReferencesSnapshot().bowls;
+      case ReferenceEntityType.Kalauds:
+        return this.getReferencesSnapshot().kalauds;
+      case ReferenceEntityType.Charcoals:
+        return this.getReferencesSnapshot().charcoals;
+      case ReferenceEntityType.ElectricHeads:
+        return this.getReferencesSnapshot().electricHeads;
+      default:
+        throw new BadRequestException('Unsupported export resource');
+    }
+  }
+
+  importResource(
+    resource: 'users' | 'orders' | 'backup' | ReferenceEntityType,
+    payload: unknown,
+  ): Promise<{ importedCount: number }> {
+    if (resource !== 'backup') {
+      return Promise.resolve({ importedCount: 0 });
+    }
+
+    if (!payload || typeof payload !== 'object') {
+      throw new BadRequestException('Backup payload must be an object');
+    }
+
+    const envelope = payload as {
+      schemaVersion?: string;
+      checksumSha256?: string;
+      payload?: unknown;
+    };
+    if (envelope.schemaVersion !== 'hookah-backup.v2' || !envelope.payload) {
+      throw new BadRequestException('Unsupported backup schema version');
+    }
+
+    const checksum = createHash('sha256')
+      .update(JSON.stringify(envelope.payload))
+      .digest('hex');
+    if (checksum !== envelope.checksumSha256) {
+      throw new BadRequestException('Backup checksum validation failed');
+    }
+
+    return Promise.resolve({ importedCount: 0 });
+  }
+
+  exportBackup(): Promise<unknown> {
+    const payload = {
+      users: [...this.users],
+      references: this.getReferencesSnapshot(),
+      orders: this.listOrdersForUser(this.systemAdmin()),
+    };
+    return Promise.resolve({
+      schemaVersion: 'hookah-backup.v2',
+      exportedAt: new Date().toISOString(),
+      resource: 'backup',
+      checksumSha256: createHash('sha256')
+        .update(JSON.stringify(payload))
+        .digest('hex'),
+      payload,
+    });
+  }
+
+  private systemAdmin(): AppUser {
+    return {
+      id: 'memory-admin',
+      login: 'admin',
+      role: UserRole.Admin,
+      email: undefined,
+      telegramUsername: undefined,
+      isApproved: true,
+      approvedAt: undefined,
+      approvedBy: undefined,
+      createdAt: new Date(0).toISOString(),
+      updatedAt: new Date(0).toISOString(),
+    };
+  }
+
   private createUserRecord(input: CreateUserInput): AppUser {
-    const normalizedLogin = this.requireString(input.login, 'login');
-
-    if (this.findStoredUserByLogin(normalizedLogin)) {
-      throw new BadRequestException('Login is already in use');
-    }
-
-    const normalizedEmail = this.normalizeOptionalValue(input.email);
-
-    if (
-      normalizedEmail &&
-      this.users.some(
-        (user) => user.email?.toLowerCase() === normalizedEmail.toLowerCase(),
-      )
-    ) {
-      throw new BadRequestException('Email is already in use');
-    }
-
-    const normalizedTelegram = this.normalizeOptionalValue(
-      input.telegramUsername,
-    );
-
-    if (
-      normalizedTelegram &&
-      this.users.some(
-        (user) =>
-          user.telegramUsername?.toLowerCase() ===
-          normalizedTelegram.toLowerCase(),
-      )
-    ) {
-      throw new BadRequestException('Telegram username is already in use');
-    }
-
     const timestamp = new Date().toISOString();
-    const storedUser: StoredUser = {
+    const user: StoredUser = {
       id: randomUUID(),
-      login: normalizedLogin,
+      login: this.requireString(input.login, 'login'),
       passwordHash: input.passwordHash,
       role: input.role,
-      email: normalizedEmail,
-      telegramUsername: normalizedTelegram,
+      email: this.normalizeOptionalValue(input.email),
+      telegramUsername: this.normalizeOptionalValue(input.telegramUsername),
       isApproved: input.isApproved,
       approvedAt: input.isApproved ? timestamp : undefined,
       approvedByUserId: input.approvedByUserId,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
-
-    this.users.push(storedUser);
-
-    return this.toPublicUser(storedUser);
+    this.users.push(user);
+    return this.toPublicUser(user);
   }
 
   private createTobacco(payload: UpsertReferencePayload): TobaccoReference {
-    const tobacco: TobaccoReference = {
+    const item: TobaccoReference = {
       id: randomUUID(),
       brand: this.requireString(payload.brand, 'brand'),
       line: this.requireString(payload.line, 'line'),
@@ -682,67 +607,47 @@ export class MemoryPlatformStore {
       ),
       isActive: payload.isActive ?? true,
     };
-
-    this.tobaccos.unshift(tobacco);
-
-    return tobacco;
+    this.tobaccos.unshift(item);
+    return item;
   }
 
   private updateTobacco(
     id: string,
     payload: UpsertReferencePayload,
   ): TobaccoReference {
-    const tobacco = this.findReferenceById(this.tobaccos, id, 'Tobacco');
-
-    if (payload.brand !== undefined) {
-      tobacco.brand = this.requireString(payload.brand, 'brand');
-    }
-
-    if (payload.line !== undefined) {
-      tobacco.line = this.requireString(payload.line, 'line');
-    }
-
-    if (payload.flavorName !== undefined) {
-      tobacco.flavorName = this.requireString(payload.flavorName, 'flavorName');
-    }
-
-    if (payload.lineStrengthLevel !== undefined) {
-      tobacco.lineStrengthLevel = this.requireScaleValue(
+    const item = this.findReferenceById(this.tobaccos, id, 'Tobacco');
+    if (payload.brand !== undefined)
+      item.brand = this.requireString(payload.brand, 'brand');
+    if (payload.line !== undefined)
+      item.line = this.requireString(payload.line, 'line');
+    if (payload.flavorName !== undefined)
+      item.flavorName = this.requireString(payload.flavorName, 'flavorName');
+    if (payload.lineStrengthLevel !== undefined)
+      item.lineStrengthLevel = this.requireScaleValue(
         payload.lineStrengthLevel,
         'lineStrengthLevel',
       );
-    }
-
-    if (payload.estimatedStrengthLevel !== undefined) {
-      tobacco.estimatedStrengthLevel = this.requireScaleValue(
+    if (payload.estimatedStrengthLevel !== undefined)
+      item.estimatedStrengthLevel = this.requireScaleValue(
         payload.estimatedStrengthLevel,
         'estimatedStrengthLevel',
       );
-    }
-
-    if (payload.brightnessLevel !== undefined) {
-      tobacco.brightnessLevel = this.requireScaleValue(
+    if (payload.brightnessLevel !== undefined)
+      item.brightnessLevel = this.requireScaleValue(
         payload.brightnessLevel,
         'brightnessLevel',
       );
-    }
-
-    if (payload.flavorDescription !== undefined) {
-      tobacco.flavorDescription = this.requireString(
+    if (payload.flavorDescription !== undefined)
+      item.flavorDescription = this.requireString(
         payload.flavorDescription,
         'flavorDescription',
       );
-    }
-
-    if (payload.isActive !== undefined) {
-      tobacco.isActive = payload.isActive;
-    }
-
-    return tobacco;
+    if (payload.isActive !== undefined) item.isActive = payload.isActive;
+    return item;
   }
 
   private createHookah(payload: UpsertReferencePayload): HookahReference {
-    const hookah: HookahReference = {
+    const item: HookahReference = {
       id: randomUUID(),
       manufacturer: this.requireString(payload.manufacturer, 'manufacturer'),
       name: this.requireString(payload.name, 'name'),
@@ -753,49 +658,35 @@ export class MemoryPlatformStore {
       hasDiffuser: payload.hasDiffuser ?? false,
       isActive: payload.isActive ?? true,
     };
-
-    this.hookahs.unshift(hookah);
-
-    return hookah;
+    this.hookahs.unshift(item);
+    return item;
   }
 
   private updateHookah(
     id: string,
     payload: UpsertReferencePayload,
   ): HookahReference {
-    const hookah = this.findReferenceById(this.hookahs, id, 'Hookah');
-
-    if (payload.manufacturer !== undefined) {
-      hookah.manufacturer = this.requireString(
+    const item = this.findReferenceById(this.hookahs, id, 'Hookah');
+    if (payload.manufacturer !== undefined)
+      item.manufacturer = this.requireString(
         payload.manufacturer,
         'manufacturer',
       );
-    }
-
-    if (payload.name !== undefined) {
-      hookah.name = this.requireString(payload.name, 'name');
-    }
-
-    if (payload.innerDiameterMm !== undefined) {
-      hookah.innerDiameterMm = this.requirePositiveNumber(
+    if (payload.name !== undefined)
+      item.name = this.requireString(payload.name, 'name');
+    if (payload.innerDiameterMm !== undefined)
+      item.innerDiameterMm = this.requirePositiveNumber(
         payload.innerDiameterMm,
         'innerDiameterMm',
       );
-    }
-
-    if (payload.hasDiffuser !== undefined) {
-      hookah.hasDiffuser = payload.hasDiffuser;
-    }
-
-    if (payload.isActive !== undefined) {
-      hookah.isActive = payload.isActive;
-    }
-
-    return hookah;
+    if (payload.hasDiffuser !== undefined)
+      item.hasDiffuser = payload.hasDiffuser;
+    if (payload.isActive !== undefined) item.isActive = payload.isActive;
+    return item;
   }
 
   private createBowl(payload: UpsertReferencePayload): BowlReference {
-    const bowl: BowlReference = {
+    const item: BowlReference = {
       id: randomUUID(),
       manufacturer: this.requireString(payload.manufacturer, 'manufacturer'),
       name: this.requireString(payload.name, 'name'),
@@ -804,50 +695,34 @@ export class MemoryPlatformStore {
       capacityBucket: this.requireCapacityBucket(payload.capacityBucket),
       isActive: payload.isActive ?? true,
     };
-
-    this.bowls.unshift(bowl);
-
-    return bowl;
+    this.bowls.unshift(item);
+    return item;
   }
 
   private updateBowl(
     id: string,
     payload: UpsertReferencePayload,
   ): BowlReference {
-    const bowl = this.findReferenceById(this.bowls, id, 'Bowl');
-
-    if (payload.manufacturer !== undefined) {
-      bowl.manufacturer = this.requireString(
+    const item = this.findReferenceById(this.bowls, id, 'Bowl');
+    if (payload.manufacturer !== undefined)
+      item.manufacturer = this.requireString(
         payload.manufacturer,
         'manufacturer',
       );
-    }
-
-    if (payload.name !== undefined) {
-      bowl.name = this.requireString(payload.name, 'name');
-    }
-
-    if (payload.bowlType !== undefined) {
-      bowl.bowlType = this.requireBowlType(payload.bowlType);
-    }
-
-    if (payload.material !== undefined) {
-      bowl.material = this.normalizeOptionalValue(payload.material);
-    }
-
-    if (payload.capacityBucket !== undefined) {
-      bowl.capacityBucket = this.requireCapacityBucket(payload.capacityBucket);
-    }
-
-    if (payload.isActive !== undefined) {
-      bowl.isActive = payload.isActive;
-    }
-
-    return bowl;
+    if (payload.name !== undefined)
+      item.name = this.requireString(payload.name, 'name');
+    if (payload.bowlType !== undefined)
+      item.bowlType = this.requireBowlType(payload.bowlType);
+    if (payload.material !== undefined)
+      item.material = this.normalizeOptionalValue(payload.material);
+    if (payload.capacityBucket !== undefined)
+      item.capacityBucket = this.requireCapacityBucket(payload.capacityBucket);
+    if (payload.isActive !== undefined) item.isActive = payload.isActive;
+    return item;
   }
 
   private createKalaud(payload: UpsertReferencePayload): KalaudReference {
-    const kalaud: KalaudReference = {
+    const item: KalaudReference = {
       id: randomUUID(),
       manufacturer: this.requireString(payload.manufacturer, 'manufacturer'),
       name: this.requireString(payload.name, 'name'),
@@ -855,84 +730,91 @@ export class MemoryPlatformStore {
       color: this.normalizeOptionalValue(payload.color),
       isActive: payload.isActive ?? true,
     };
-
-    this.kalauds.unshift(kalaud);
-
-    return kalaud;
+    this.kalauds.unshift(item);
+    return item;
   }
 
   private updateKalaud(
     id: string,
     payload: UpsertReferencePayload,
   ): KalaudReference {
-    const kalaud = this.findReferenceById(this.kalauds, id, 'Kalaud');
-
-    if (payload.manufacturer !== undefined) {
-      kalaud.manufacturer = this.requireString(
+    const item = this.findReferenceById(this.kalauds, id, 'Kalaud');
+    if (payload.manufacturer !== undefined)
+      item.manufacturer = this.requireString(
         payload.manufacturer,
         'manufacturer',
       );
-    }
-
-    if (payload.name !== undefined) {
-      kalaud.name = this.requireString(payload.name, 'name');
-    }
-
-    if (payload.material !== undefined) {
-      kalaud.material = this.normalizeOptionalValue(payload.material);
-    }
-
-    if (payload.color !== undefined) {
-      kalaud.color = this.normalizeOptionalValue(payload.color);
-    }
-
-    if (payload.isActive !== undefined) {
-      kalaud.isActive = payload.isActive;
-    }
-
-    return kalaud;
+    if (payload.name !== undefined)
+      item.name = this.requireString(payload.name, 'name');
+    if (payload.material !== undefined)
+      item.material = this.normalizeOptionalValue(payload.material);
+    if (payload.color !== undefined)
+      item.color = this.normalizeOptionalValue(payload.color);
+    if (payload.isActive !== undefined) item.isActive = payload.isActive;
+    return item;
   }
 
   private createCharcoal(payload: UpsertReferencePayload): CharcoalReference {
-    const charcoal: CharcoalReference = {
+    const item: CharcoalReference = {
       id: randomUUID(),
       manufacturer: this.requireString(payload.manufacturer, 'manufacturer'),
       name: this.requireString(payload.name, 'name'),
       sizeLabel: this.requireString(payload.sizeLabel, 'sizeLabel'),
       isActive: payload.isActive ?? true,
     };
-
-    this.charcoals.unshift(charcoal);
-
-    return charcoal;
+    this.charcoals.unshift(item);
+    return item;
   }
 
   private updateCharcoal(
     id: string,
     payload: UpsertReferencePayload,
   ): CharcoalReference {
-    const charcoal = this.findReferenceById(this.charcoals, id, 'Charcoal');
-
-    if (payload.manufacturer !== undefined) {
-      charcoal.manufacturer = this.requireString(
+    const item = this.findReferenceById(this.charcoals, id, 'Charcoal');
+    if (payload.manufacturer !== undefined)
+      item.manufacturer = this.requireString(
         payload.manufacturer,
         'manufacturer',
       );
-    }
+    if (payload.name !== undefined)
+      item.name = this.requireString(payload.name, 'name');
+    if (payload.sizeLabel !== undefined)
+      item.sizeLabel = this.requireString(payload.sizeLabel, 'sizeLabel');
+    if (payload.isActive !== undefined) item.isActive = payload.isActive;
+    return item;
+  }
 
-    if (payload.name !== undefined) {
-      charcoal.name = this.requireString(payload.name, 'name');
-    }
+  private createElectricHead(
+    payload: UpsertReferencePayload,
+  ): ElectricHeadReference {
+    const item: ElectricHeadReference = {
+      id: randomUUID(),
+      manufacturer: this.requireString(payload.manufacturer, 'manufacturer'),
+      name: this.requireString(payload.name, 'name'),
+      isActive: payload.isActive ?? true,
+    };
+    this.electricHeads.unshift(item);
+    return item;
+  }
 
-    if (payload.sizeLabel !== undefined) {
-      charcoal.sizeLabel = this.requireString(payload.sizeLabel, 'sizeLabel');
-    }
-
-    if (payload.isActive !== undefined) {
-      charcoal.isActive = payload.isActive;
-    }
-
-    return charcoal;
+  private updateElectricHead(
+    id: string,
+    payload: UpsertReferencePayload,
+  ): ElectricHeadReference {
+    const item = this.findReferenceById(
+      this.electricHeads,
+      id,
+      'Electric head',
+    );
+    if (payload.manufacturer !== undefined)
+      item.manufacturer = this.requireString(
+        payload.manufacturer,
+        'manufacturer',
+      );
+    if (payload.name !== undefined)
+      item.name = this.requireString(payload.name, 'name');
+    if (payload.isActive !== undefined) item.isActive = payload.isActive;
+    return item;
   }
 
   private findReferenceById<T extends { id: string }>(
@@ -941,31 +823,14 @@ export class MemoryPlatformStore {
     label: string,
   ): T {
     const item = collection.find((entry) => entry.id === id);
-
-    if (!item) {
-      throw new NotFoundException(`${label} not found`);
-    }
-
+    if (!item) throw new NotFoundException(`${label} not found`);
     return item;
   }
 
   private findOrder(orderId: string): OrderRecord {
     const order = this.orders.find((entry) => entry.id === orderId);
-
-    if (!order) {
-      throw new NotFoundException('Order not found');
-    }
-
+    if (!order) throw new NotFoundException('Order not found');
     return order;
-  }
-
-  private findOpenOrderForTable(tableLabel: string): OrderRecord | undefined {
-    return this.orders.find(
-      (order) =>
-        order.tableLabel.toLowerCase() === tableLabel.toLowerCase() &&
-        (order.status === OrderStatus.New ||
-          order.status === OrderStatus.InProgress),
-    );
   }
 
   private toPublicUser(user: StoredUser): AppUser {
@@ -977,7 +842,14 @@ export class MemoryPlatformStore {
       telegramUsername: user.telegramUsername,
       isApproved: user.isApproved,
       approvedAt: user.approvedAt,
-      approvedBy: this.toUserPreview(user.approvedByUserId),
+      approvedBy: user.approvedByUserId
+        ? {
+            id: user.approvedByUserId,
+            login:
+              this.findStoredUserById(user.approvedByUserId)?.login ??
+              'unknown',
+          }
+        : undefined,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -986,32 +858,37 @@ export class MemoryPlatformStore {
   private toOrderView(order: OrderRecord): OrderView {
     const participants = order.participants.map((participant) => {
       const client = this.findPublicUserById(participant.clientUserId);
-
-      if (!client) {
-        throw new NotFoundException('Client for order not found');
-      }
-
+      if (!client) throw new NotFoundException('Client not found');
+      const requestedBlend = this.resolveBlend(participant.requestedBlend);
       return {
         client,
         description: participant.description,
         joinedAt: participant.joinedAt,
-        requestedTobaccos: this.resolveTobaccos(
-          participant.requestedTobaccoIds,
-        ),
+        requestedBlend,
+        requestedTobaccos: requestedBlend.map((entry) => entry.tobacco),
         tableApprovalStatus: participant.tableApprovalStatus,
         tableApprovedAt: participant.tableApprovedAt,
-        tableApprovedBy: this.toUserPreview(participant.tableApprovedByUserId),
+        tableApprovedBy: participant.tableApprovedByUserId
+          ? {
+              id: participant.tableApprovedByUserId,
+              login:
+                this.findStoredUserById(participant.tableApprovedByUserId)
+                  ?.login ?? 'unknown',
+            }
+          : undefined,
         feedback: participant.feedback
           ? this.toFeedbackView(participant.feedback)
           : undefined,
       };
     });
-    const feedbacks = participants
-      .map((participant) => participant.feedback)
-      .filter((feedback): feedback is NonNullable<typeof feedback> =>
-        Boolean(feedback),
-      );
-
+    const requestedBlend = [
+      ...new Map(
+        participants
+          .flatMap((participant) => participant.requestedBlend)
+          .map((entry) => [entry.tobacco.id, entry]),
+      ).values(),
+    ];
+    const actualBlend = this.resolveBlend(order.actualBlend ?? []);
     return {
       id: order.id,
       tableLabel: order.tableLabel,
@@ -1023,15 +900,17 @@ export class MemoryPlatformStore {
       acceptedBy: order.acceptedByUserId
         ? this.findPublicUserById(order.acceptedByUserId)
         : undefined,
+      requestedSetup: order.requestedSetup,
+      actualSetup: order.actualSetup,
       participants,
-      requestedTobaccos: this.resolveDistinctTobaccos(
-        order.participants.map(
-          (participant) => participant.requestedTobaccoIds,
-        ),
-      ),
-      actualTobaccos: this.resolveTobaccos(order.actualTobaccoIds ?? []),
+      requestedBlend,
+      requestedTobaccos: requestedBlend.map((entry) => entry.tobacco),
+      actualBlend,
+      actualTobaccos: actualBlend.map((entry) => entry.tobacco),
       packingComment: order.packingComment,
-      feedbacks,
+      feedbacks: participants
+        .map((participant) => participant.feedback)
+        .filter((entry): entry is OrderFeedbackView => Boolean(entry)),
       timeline: order.timeline.map((entry) => ({
         id: entry.id,
         type: entry.type,
@@ -1045,47 +924,22 @@ export class MemoryPlatformStore {
     };
   }
 
-  private toUserPreview(userId: string | undefined):
-    | {
-        id: string;
-        login: string;
-      }
-    | undefined {
-    if (!userId) {
-      return undefined;
-    }
-
-    const user = this.findStoredUserById(userId);
-
-    return user
-      ? {
-          id: user.id,
-          login: user.login,
-        }
-      : undefined;
-  }
-
-  private resolveTobaccos(tobaccoIds: string[]): TobaccoReference[] {
-    return tobaccoIds
-      .map((tobaccoId) =>
-        this.tobaccos.find((tobacco) => tobacco.id === tobaccoId),
-      )
-      .filter((tobacco): tobacco is TobaccoReference => Boolean(tobacco));
-  }
-
-  private resolveDistinctTobaccos(
-    tobaccoIdsList: string[][],
-  ): TobaccoReference[] {
-    return this.resolveTobaccos([...new Set(tobaccoIdsList.flat())]);
+  private resolveBlend(
+    blend: BlendComponentInput[],
+  ): OrderBlendComponentView[] {
+    return blend.map((entry) => ({
+      tobacco: this.findReferenceById(
+        this.tobaccos,
+        entry.tobaccoId,
+        'Tobacco',
+      ),
+      percentage: entry.percentage,
+    }));
   }
 
   private toFeedbackView(feedback: OrderFeedbackRecord): OrderFeedbackView {
     const client = this.findPublicUserById(feedback.clientUserId);
-
-    if (!client) {
-      throw new NotFoundException('Client for feedback not found');
-    }
-
+    if (!client) throw new NotFoundException('Client for feedback not found');
     return {
       client,
       ratingScore: feedback.ratingScore,
@@ -1111,70 +965,110 @@ export class MemoryPlatformStore {
     };
   }
 
-  private validateTobaccoSelection(
-    tobaccoIds: string[],
+  private validateBlendSelection(
+    blend: BlendComponentInput[],
     label: string,
-  ): string[] {
-    const uniqueIds = [...new Set(tobaccoIds)];
-
-    if (uniqueIds.length === 0 || uniqueIds.length > 3) {
+  ): BlendComponentInput[] {
+    if (!Array.isArray(blend) || blend.length === 0 || blend.length > 3)
       throw new BadRequestException(
         `${label} should contain from 1 to 3 tobaccos`,
       );
-    }
+    const total = blend.reduce((sum, entry) => sum + entry.percentage, 0);
+    if (Math.abs(total - 100) > 0.001)
+      throw new BadRequestException(`${label} should sum to 100 percent`);
+    return blend.map((entry) => ({
+      tobaccoId: this.findReferenceById(
+        this.tobaccos,
+        entry.tobaccoId,
+        'Tobacco',
+      ).id,
+      percentage: Number(entry.percentage.toFixed(2)),
+    }));
+  }
 
-    uniqueIds.forEach((tobaccoId) => {
-      if (!this.tobaccos.some((tobacco) => tobacco.id === tobaccoId)) {
-        throw new BadRequestException(`Unknown tobacco in ${label}`);
-      }
-    });
-
-    return uniqueIds;
+  private resolveSetupView(input: OrderSetupInput): OrderSetupView {
+    return input.heatingSystemType === HeatingSystemType.Electric
+      ? {
+          heatingSystemType: HeatingSystemType.Electric,
+          packingStyle: input.packingStyle,
+          customPackingStyle: this.normalizeOptionalValue(
+            input.customPackingStyle,
+          ),
+          hookah: input.hookahId
+            ? this.findReferenceById(this.hookahs, input.hookahId, 'Hookah')
+            : undefined,
+          bowl: undefined,
+          kalaud: undefined,
+          charcoal: undefined,
+          electricHead: input.electricHeadId
+            ? this.findReferenceById(
+                this.electricHeads,
+                input.electricHeadId,
+                'Electric head',
+              )
+            : undefined,
+          charcoalCount: undefined,
+          warmupMode: undefined,
+          warmupDurationMinutes: undefined,
+        }
+      : {
+          heatingSystemType: HeatingSystemType.Coal,
+          packingStyle: input.packingStyle,
+          customPackingStyle: this.normalizeOptionalValue(
+            input.customPackingStyle,
+          ),
+          hookah: input.hookahId
+            ? this.findReferenceById(this.hookahs, input.hookahId, 'Hookah')
+            : undefined,
+          bowl: input.bowlId
+            ? this.findReferenceById(this.bowls, input.bowlId, 'Bowl')
+            : undefined,
+          kalaud: input.kalaudId
+            ? this.findReferenceById(this.kalauds, input.kalaudId, 'Kalaud')
+            : undefined,
+          charcoal: input.charcoalId
+            ? this.findReferenceById(
+                this.charcoals,
+                input.charcoalId,
+                'Charcoal',
+              )
+            : undefined,
+          electricHead: undefined,
+          charcoalCount: input.charcoalCount,
+          warmupMode: input.warmupMode,
+          warmupDurationMinutes: input.warmupDurationMinutes,
+        };
   }
 
   private requireString(
     value: string | number | boolean | undefined,
     label: string,
   ): string {
-    if (typeof value !== 'string') {
+    if (typeof value !== 'string' || value.trim().length === 0)
       throw new BadRequestException(`${label} must be a string`);
-    }
-
-    const normalized = value.trim();
-
-    if (normalized.length === 0) {
-      throw new BadRequestException(`${label} must not be empty`);
-    }
-
-    return normalized;
+    return value.trim();
   }
-
   private requireScaleValue(
     value: string | number | boolean | undefined,
     label: string,
   ): number {
-    if (typeof value !== 'number' || !Number.isInteger(value)) {
-      throw new BadRequestException(`${label} must be an integer`);
-    }
-
-    if (value < 1 || value > 5) {
+    if (
+      typeof value !== 'number' ||
+      !Number.isInteger(value) ||
+      value < 1 ||
+      value > 5
+    )
       throw new BadRequestException(`${label} must be between 1 and 5`);
-    }
-
     return value;
   }
-
   private requirePositiveNumber(
     value: string | number | boolean | undefined,
     label: string,
   ): number {
-    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0)
       throw new BadRequestException(`${label} must be a positive number`);
-    }
-
     return value;
   }
-
   private requireBowlType(
     value: UpsertReferencePayload['bowlType'],
   ): BowlReference['bowlType'] {
@@ -1183,13 +1077,10 @@ export class MemoryPlatformStore {
       value !== 'killer' &&
       value !== 'turka' &&
       value !== 'elian'
-    ) {
+    )
       throw new BadRequestException('bowlType is invalid');
-    }
-
     return value;
   }
-
   private requireCapacityBucket(
     value: UpsertReferencePayload['capacityBucket'],
   ): BowlReference['capacityBucket'] {
@@ -1199,147 +1090,89 @@ export class MemoryPlatformStore {
       value !== 'medium' &&
       value !== 'small' &&
       value !== 'very_small'
-    ) {
+    )
       throw new BadRequestException('capacityBucket is invalid');
-    }
-
     return value;
   }
-
   private normalizeOptionalValue(
     value: string | number | boolean | undefined,
   ): string | undefined {
-    if (typeof value !== 'string') {
-      return undefined;
-    }
-
+    if (typeof value !== 'string') return undefined;
     const normalized = value.trim();
-
     return normalized.length > 0 ? normalized : undefined;
   }
 
   private seedReferences(): void {
-    this.tobaccos.push(
-      {
-        id: randomUUID(),
-        brand: 'Darkside',
-        line: 'Core',
-        flavorName: 'Bounty Hunter',
-        lineStrengthLevel: 4,
-        estimatedStrengthLevel: 4,
-        brightnessLevel: 3,
-        flavorDescription: 'Шоколадно-кокосовый десертный вкус.',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        brand: 'Must Have',
-        line: 'Classic',
-        flavorName: 'Pinkman',
-        lineStrengthLevel: 3,
-        estimatedStrengthLevel: 3,
-        brightnessLevel: 5,
-        flavorDescription: 'Яркий ягодный микс с цитрусовой свежестью.',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        brand: 'Black Burn',
-        line: 'Base',
-        flavorName: 'Mint Shock',
-        lineStrengthLevel: 4,
-        estimatedStrengthLevel: 4,
-        brightnessLevel: 4,
-        flavorDescription: 'Мощная мята с выраженным холодком.',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        brand: 'Element',
-        line: 'Water',
-        flavorName: 'Pear Lemonade',
-        lineStrengthLevel: 2,
-        estimatedStrengthLevel: 2,
-        brightnessLevel: 4,
-        flavorDescription: 'Сладкая груша с лимонадным профилем.',
-        isActive: true,
-      },
-    );
-
-    this.hookahs.push(
-      {
-        id: randomUUID(),
-        manufacturer: 'Alpha Hookah',
-        name: 'Model X',
-        innerDiameterMm: 13,
-        hasDiffuser: true,
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        manufacturer: 'MattPear',
-        name: 'Simple M',
-        innerDiameterMm: 11,
-        hasDiffuser: false,
-        isActive: true,
-      },
-    );
-
-    this.bowls.push(
-      {
-        id: randomUUID(),
-        manufacturer: 'Werkbund',
-        name: 'Turkish Killer',
-        bowlType: 'killer',
-        material: 'Глина',
-        capacityBucket: 'medium',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        manufacturer: 'Voskurimsya',
-        name: 'Phunnel One',
-        bowlType: 'phunnel',
-        material: 'Фарфор',
-        capacityBucket: 'small',
-        isActive: true,
-      },
-    );
-
-    this.kalauds.push(
-      {
-        id: randomUUID(),
-        manufacturer: 'Na Grani',
-        name: 'HMD Pro',
-        material: 'Алюминий',
-        color: 'Черный',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        manufacturer: 'Conceptic',
-        name: 'Heat Keeper',
-        material: 'Сталь',
-        color: 'Серебристый',
-        isActive: true,
-      },
-    );
-
-    this.charcoals.push(
-      {
-        id: randomUUID(),
-        manufacturer: 'CocoUrth',
-        name: 'Cube',
-        sizeLabel: '25 мм',
-        isActive: true,
-      },
-      {
-        id: randomUUID(),
-        manufacturer: 'Crown',
-        name: 'Big Cube',
-        sizeLabel: '26 мм',
-        isActive: true,
-      },
-    );
+    this.tobaccos.push({
+      id: randomUUID(),
+      brand: 'Darkside',
+      line: 'Core',
+      flavorName: 'Bounty Hunter',
+      lineStrengthLevel: 4,
+      estimatedStrengthLevel: 4,
+      brightnessLevel: 3,
+      flavorDescription: 'Шоколадно-кокосовый десертный вкус.',
+      isActive: true,
+    });
+    this.tobaccos.push({
+      id: randomUUID(),
+      brand: 'Must Have',
+      line: 'Classic',
+      flavorName: 'Pinkman',
+      lineStrengthLevel: 3,
+      estimatedStrengthLevel: 3,
+      brightnessLevel: 5,
+      flavorDescription: 'Яркий ягодный микс с цитрусовой свежестью.',
+      isActive: true,
+    });
+    this.tobaccos.push({
+      id: randomUUID(),
+      brand: 'Black Burn',
+      line: 'Base',
+      flavorName: 'Mint Shock',
+      lineStrengthLevel: 4,
+      estimatedStrengthLevel: 4,
+      brightnessLevel: 4,
+      flavorDescription: 'Мощная мята с выраженным холодком.',
+      isActive: true,
+    });
+    this.hookahs.push({
+      id: randomUUID(),
+      manufacturer: 'Alpha Hookah',
+      name: 'Model X',
+      innerDiameterMm: 13,
+      hasDiffuser: true,
+      isActive: true,
+    });
+    this.bowls.push({
+      id: randomUUID(),
+      manufacturer: 'Werkbund',
+      name: 'Turkish Killer',
+      bowlType: 'killer',
+      material: 'Глина',
+      capacityBucket: 'medium',
+      isActive: true,
+    });
+    this.kalauds.push({
+      id: randomUUID(),
+      manufacturer: 'Na Grani',
+      name: 'HMD Pro',
+      material: 'Алюминий',
+      color: 'Чёрный',
+      isActive: true,
+    });
+    this.charcoals.push({
+      id: randomUUID(),
+      manufacturer: 'CocoUrth',
+      name: 'Cube',
+      sizeLabel: '25 мм',
+      isActive: true,
+    });
+    this.electricHeads.push({
+      id: randomUUID(),
+      manufacturer: 'Alpha Hookah',
+      name: 'Hookah Pro',
+      isActive: true,
+    });
   }
 }

@@ -12,10 +12,14 @@ import type {
   AppUser,
   BowlReference,
   CharcoalReference,
+  ElectricHeadReference,
   HookahReference,
   KalaudReference,
+  OrderBlendComponentView,
   OrderFeedbackView,
   OrderParticipantView,
+  OrderSetupInput,
+  OrderSetupView,
   OrderTimelineEntryView,
   OrderView,
   ReferencesSnapshot,
@@ -24,8 +28,10 @@ import type {
   UpsertReferencePayload,
 } from './platform.models';
 import {
+  HeatingSystemType,
   OrderStatus,
   OrderTimelineEventType,
+  PackingStyle,
   ReferenceEntityType,
   TableApprovalStatus,
   UserRole,
@@ -59,6 +65,14 @@ interface BackupPayload {
   users: StoredUser[];
   references: ReferencesSnapshot;
   orders: OrderView[];
+}
+
+interface BackupEnvelope {
+  schemaVersion: 'hookah-backup.v2';
+  exportedAt: string;
+  resource: 'backup';
+  checksumSha256: string;
+  payload: BackupPayload;
 }
 
 @Injectable()
@@ -201,13 +215,15 @@ export class PostgresPlatformStore {
   }
 
   async getReferencesSnapshot(): Promise<ReferencesSnapshot> {
-    const [tobaccos, hookahs, bowls, kalauds, charcoals] = await Promise.all([
-      this.listTobaccos(),
-      this.listHookahs(),
-      this.listBowls(),
-      this.listKalauds(),
-      this.listCharcoals(),
-    ]);
+    const [tobaccos, hookahs, bowls, kalauds, charcoals, electricHeads] =
+      await Promise.all([
+        this.listTobaccos(),
+        this.listHookahs(),
+        this.listBowls(),
+        this.listKalauds(),
+        this.listCharcoals(),
+        this.listElectricHeads(),
+      ]);
 
     return {
       tobaccos,
@@ -215,6 +231,7 @@ export class PostgresPlatformStore {
       bowls,
       kalauds,
       charcoals,
+      electricHeads,
     };
   }
 
@@ -227,6 +244,7 @@ export class PostgresPlatformStore {
     | BowlReference
     | KalaudReference
     | CharcoalReference
+    | ElectricHeadReference
   > {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
@@ -239,6 +257,8 @@ export class PostgresPlatformStore {
         return this.createKalaud(payload);
       case ReferenceEntityType.Charcoals:
         return this.createCharcoal(payload);
+      case ReferenceEntityType.ElectricHeads:
+        return this.createElectricHead(payload);
       default:
         throw new BadRequestException('Unsupported reference type');
     }
@@ -254,6 +274,7 @@ export class PostgresPlatformStore {
     | BowlReference
     | KalaudReference
     | CharcoalReference
+    | ElectricHeadReference
   > {
     switch (type) {
       case ReferenceEntityType.Tobaccos:
@@ -266,6 +287,8 @@ export class PostgresPlatformStore {
         return this.updateKalaud(id, payload);
       case ReferenceEntityType.Charcoals:
         return this.updateCharcoal(id, payload);
+      case ReferenceEntityType.ElectricHeads:
+        return this.updateElectricHead(id, payload);
       default:
         throw new BadRequestException('Unsupported reference type');
     }
@@ -315,7 +338,8 @@ export class PostgresPlatformStore {
     input: {
       tableLabel: string;
       description: string;
-      requestedTobaccoIds: string[];
+      requestedBlend: Array<{ tobaccoId: string; percentage: number }>;
+      requestedSetup: OrderSetupInput;
     },
   ): Promise<OrderView> {
     const client = await this.findStoredUserById(clientUserId);
@@ -326,9 +350,13 @@ export class PostgresPlatformStore {
 
     const tableLabel = this.requireString(input.tableLabel, 'tableLabel');
     const description = this.requireString(input.description, 'description');
-    const requestedTobaccoIds = await this.validateTobaccoSelection(
-      input.requestedTobaccoIds,
+    const requestedBlend = await this.validateBlendSelection(
+      input.requestedBlend,
       'requested blend',
+    );
+    const requestedSetup = await this.validateOrderSetupInput(
+      input.requestedSetup,
+      'requestedSetup',
     );
 
     const orderId = await this.databaseService.withTransaction(
@@ -384,7 +412,7 @@ export class PostgresPlatformStore {
           await this.insertParticipantTobaccos(
             transaction,
             participantId,
-            requestedTobaccoIds,
+            requestedBlend,
           );
 
           await transaction.query(
@@ -423,11 +451,40 @@ export class PostgresPlatformStore {
             status,
             service_type,
             table_label,
-            total_amount
+            total_amount,
+            requested_heating_system_type,
+            requested_packing_style,
+            requested_custom_packing_style,
+            requested_hookah_id,
+            requested_bowl_id,
+            requested_kalaud_id,
+            requested_charcoal_id,
+            requested_electric_head_id,
+            requested_charcoal_count,
+            requested_warmup_mode,
+            requested_warmup_duration_minutes
           )
-          values ($1, $2, 'hookah', $3, 0)
+          values (
+            $1, $2, 'hookah', $3, 0,
+            $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
+          )
         `,
-          [createdOrderId, OrderStatus.New, tableLabel],
+          [
+            createdOrderId,
+            OrderStatus.New,
+            tableLabel,
+            requestedSetup.heatingSystemType,
+            requestedSetup.packingStyle ?? null,
+            requestedSetup.customPackingStyle ?? null,
+            requestedSetup.hookahId ?? null,
+            requestedSetup.bowlId ?? null,
+            requestedSetup.kalaudId ?? null,
+            requestedSetup.charcoalId ?? null,
+            requestedSetup.electricHeadId ?? null,
+            requestedSetup.charcoalCount ?? null,
+            requestedSetup.warmupMode ?? null,
+            requestedSetup.warmupDurationMinutes ?? null,
+          ],
         );
 
         await transaction.query(
@@ -446,7 +503,7 @@ export class PostgresPlatformStore {
         await this.insertParticipantTobaccos(
           transaction,
           participantId,
-          requestedTobaccoIds,
+          requestedBlend,
         );
 
         await transaction.query(
@@ -618,11 +675,19 @@ export class PostgresPlatformStore {
   async fulfillOrder(
     orderId: string,
     actorUserId: string,
-    input: { actualTobaccoIds: string[]; packingComment: string },
+    input: {
+      actualBlend: Array<{ tobaccoId: string; percentage: number }>;
+      actualSetup: OrderSetupInput;
+      packingComment: string;
+    },
   ): Promise<OrderView> {
-    const actualTobaccoIds = await this.validateTobaccoSelection(
-      input.actualTobaccoIds,
+    const actualBlend = await this.validateBlendSelection(
+      input.actualBlend,
       'actual packing',
+    );
+    const actualSetup = await this.validateOrderSetupInput(
+      input.actualSetup,
+      'actualSetup',
     );
 
     await this.databaseService.withTransaction(async (transaction) => {
@@ -644,7 +709,18 @@ export class PostgresPlatformStore {
             status = $2,
             accepted_by_user_id = $3,
             delivered_at = now(),
-            packing_comment = $4
+            packing_comment = $4,
+            actual_heating_system_type = $5,
+            actual_packing_style = $6,
+            actual_custom_packing_style = $7,
+            actual_hookah_id = $8,
+            actual_bowl_id = $9,
+            actual_kalaud_id = $10,
+            actual_charcoal_id = $11,
+            actual_electric_head_id = $12,
+            actual_charcoal_count = $13,
+            actual_warmup_mode = $14,
+            actual_warmup_duration_minutes = $15
           where id = $1
         `,
         [
@@ -652,6 +728,17 @@ export class PostgresPlatformStore {
           OrderStatus.ReadyForFeedback,
           actorUserId,
           this.normalizeOptionalValue(input.packingComment) ?? null,
+          actualSetup.heatingSystemType,
+          actualSetup.packingStyle ?? null,
+          actualSetup.customPackingStyle ?? null,
+          actualSetup.hookahId ?? null,
+          actualSetup.bowlId ?? null,
+          actualSetup.kalaudId ?? null,
+          actualSetup.charcoalId ?? null,
+          actualSetup.electricHeadId ?? null,
+          actualSetup.charcoalCount ?? null,
+          actualSetup.warmupMode ?? null,
+          actualSetup.warmupDurationMinutes ?? null,
         ],
       );
 
@@ -660,7 +747,7 @@ export class PostgresPlatformStore {
         [orderId],
       );
 
-      await this.insertOrderTobaccos(transaction, orderId, actualTobaccoIds);
+      await this.insertOrderTobaccos(transaction, orderId, actualBlend);
 
       await transaction.query(
         `
@@ -835,11 +922,17 @@ export class PostgresPlatformStore {
       case 'backup':
         return this.exportBackup();
       case ReferenceEntityType.Tobaccos:
+        return (await this.getReferencesSnapshot()).tobaccos;
       case ReferenceEntityType.Hookahs:
+        return (await this.getReferencesSnapshot()).hookahs;
       case ReferenceEntityType.Bowls:
+        return (await this.getReferencesSnapshot()).bowls;
       case ReferenceEntityType.Kalauds:
+        return (await this.getReferencesSnapshot()).kalauds;
       case ReferenceEntityType.Charcoals:
-        return (await this.getReferencesSnapshot())[resource];
+        return (await this.getReferencesSnapshot()).charcoals;
+      case ReferenceEntityType.ElectricHeads:
+        return (await this.getReferencesSnapshot()).electricHeads;
       default:
         throw new BadRequestException('Unsupported export resource');
     }
@@ -861,24 +954,55 @@ export class PostgresPlatformStore {
       case ReferenceEntityType.Bowls:
       case ReferenceEntityType.Kalauds:
       case ReferenceEntityType.Charcoals:
+      case ReferenceEntityType.ElectricHeads:
         return this.importReferences(resource, payload);
       default:
         throw new BadRequestException('Unsupported import resource');
     }
   }
 
-  async exportBackup(): Promise<BackupPayload> {
+  async exportBackup(): Promise<BackupEnvelope> {
     const [users, references, orders] = await Promise.all([
       this.listStoredUsers(),
       this.getReferencesSnapshot(),
       this.listAllOrders(),
     ]);
 
-    return {
+    const payload: BackupPayload = {
       users,
       references,
       orders,
     };
+    const exportedAt = new Date().toISOString();
+    const checksumSha256 = this.computeBackupChecksum(payload);
+    const envelope: BackupEnvelope = {
+      schemaVersion: 'hookah-backup.v2',
+      exportedAt,
+      resource: 'backup',
+      checksumSha256,
+      payload,
+    };
+
+    await this.writeBackupAuditEvent({
+      resourceName: 'backup',
+      actionName: 'export',
+      schemaVersion: envelope.schemaVersion,
+      checksumSha256,
+      itemCount:
+        users.length +
+        orders.length +
+        references.tobaccos.length +
+        references.hookahs.length +
+        references.bowls.length +
+        references.kalauds.length +
+        references.charcoals.length +
+        references.electricHeads.length,
+      details: {
+        exportedAt,
+      },
+    });
+
+    return envelope;
   }
 
   private async createUserRecord(input: CreateUserInput): Promise<AppUser> {
@@ -1339,6 +1463,65 @@ export class PostgresPlatformStore {
     return this.findCharcoalById(id);
   }
 
+  private async createElectricHead(
+    payload: UpsertReferencePayload,
+  ): Promise<ElectricHeadReference> {
+    const manufacturerId = await this.ensureManufacturer(
+      this.requireString(payload.manufacturer, 'manufacturer'),
+    );
+    const electricHeadId = randomUUID();
+
+    await this.databaseService.query(
+      `
+        insert into equipment.electric_heads (
+          id,
+          manufacturer_id,
+          name
+        )
+        values ($1, $2, $3)
+      `,
+      [
+        electricHeadId,
+        manufacturerId,
+        this.requireString(payload.name, 'name'),
+      ],
+    );
+
+    return this.findElectricHeadById(electricHeadId);
+  }
+
+  private async updateElectricHead(
+    id: string,
+    payload: UpsertReferencePayload,
+  ): Promise<ElectricHeadReference> {
+    const existing = await this.findElectricHeadById(id);
+    const manufacturerId =
+      payload.manufacturer !== undefined
+        ? await this.ensureManufacturer(
+            this.requireString(payload.manufacturer, 'manufacturer'),
+          )
+        : await this.ensureManufacturer(existing.manufacturer);
+
+    await this.databaseService.query(
+      `
+        update equipment.electric_heads
+        set
+          manufacturer_id = $2,
+          name = $3
+        where id = $1
+      `,
+      [
+        id,
+        manufacturerId,
+        payload.name !== undefined
+          ? this.requireString(payload.name, 'name')
+          : existing.name,
+      ],
+    );
+
+    return this.findElectricHeadById(id);
+  }
+
   private async listStoredUsers(): Promise<StoredUser[]> {
     const result = await this.databaseService.query(
       `${this.userSelectSql()} order by user_account.created_at desc`,
@@ -1371,6 +1554,28 @@ export class PostgresPlatformStore {
           sales_order.delivered_at,
           sales_order.feedback_at,
           sales_order.packing_comment,
+          sales_order.requested_heating_system_type::text as requested_heating_system_type,
+          sales_order.requested_packing_style::text as requested_packing_style,
+          sales_order.requested_custom_packing_style,
+          sales_order.requested_hookah_id::text as requested_hookah_id,
+          sales_order.requested_bowl_id::text as requested_bowl_id,
+          sales_order.requested_kalaud_id::text as requested_kalaud_id,
+          sales_order.requested_charcoal_id::text as requested_charcoal_id,
+          sales_order.requested_electric_head_id::text as requested_electric_head_id,
+          sales_order.requested_charcoal_count,
+          sales_order.requested_warmup_mode::text as requested_warmup_mode,
+          sales_order.requested_warmup_duration_minutes,
+          sales_order.actual_heating_system_type::text as actual_heating_system_type,
+          sales_order.actual_packing_style::text as actual_packing_style,
+          sales_order.actual_custom_packing_style,
+          sales_order.actual_hookah_id::text as actual_hookah_id,
+          sales_order.actual_bowl_id::text as actual_bowl_id,
+          sales_order.actual_kalaud_id::text as actual_kalaud_id,
+          sales_order.actual_charcoal_id::text as actual_charcoal_id,
+          sales_order.actual_electric_head_id::text as actual_electric_head_id,
+          sales_order.actual_charcoal_count,
+          sales_order.actual_warmup_mode::text as actual_warmup_mode,
+          sales_order.actual_warmup_duration_minutes,
           accepted_user.id::text as accepted_by_id,
           accepted_user.login as accepted_by_login,
           accepted_user.role::text as accepted_by_role,
@@ -1430,9 +1635,12 @@ export class PostgresPlatformStore {
     const participantIds = participantResult.rows.map(
       (row) => row.id as string,
     );
-    const requestedTobaccosByParticipant =
-      await this.loadParticipantTobaccos(participantIds);
-    const actualTobaccosByOrder = await this.loadActualTobaccos(orderIds);
+    const [references, requestedBlendByParticipant, actualBlendByOrder] =
+      await Promise.all([
+        this.getReferencesSnapshot(),
+        this.loadParticipantTobaccos(participantIds),
+        this.loadActualTobaccos(orderIds),
+      ]);
     const feedbacksByParticipant = await this.loadFeedbacks(orderIds);
     const timelineByOrder = await this.loadTimeline(orderIds);
 
@@ -1447,8 +1655,10 @@ export class PostgresPlatformStore {
         client,
         description: row.description as string,
         joinedAt: this.toIsoString(row.joined_at),
-        requestedTobaccos:
-          requestedTobaccosByParticipant.get(row.id as string) ?? [],
+        requestedBlend: requestedBlendByParticipant.get(row.id as string) ?? [],
+        requestedTobaccos: (
+          requestedBlendByParticipant.get(row.id as string) ?? []
+        ).map((entry) => entry.tobacco),
         tableApprovalStatus: row.table_approval_status as TableApprovalStatus,
         tableApprovedAt: this.toOptionalIsoString(row.table_approved_at),
         tableApprovedBy: row.table_approved_by_id
@@ -1479,11 +1689,23 @@ export class PostgresPlatformStore {
         acceptedBy: row.accepted_by_id
           ? this.mapPublicUserFromAlias(row, 'accepted_by')
           : undefined,
+        requestedSetup: this.resolveOrderSetupView(
+          row,
+          'requested',
+          references,
+        ),
+        actualSetup: this.resolveOrderSetupView(row, 'actual', references),
         participants,
+        requestedBlend: this.deduplicateBlendComponents(
+          participants.flatMap((participant) => participant.requestedBlend),
+        ),
         requestedTobaccos: this.deduplicateTobaccos(
           participants.flatMap((participant) => participant.requestedTobaccos),
         ),
-        actualTobaccos: actualTobaccosByOrder.get(row.id as string) ?? [],
+        actualBlend: actualBlendByOrder.get(row.id as string) ?? [],
+        actualTobaccos: (actualBlendByOrder.get(row.id as string) ?? []).map(
+          (entry) => entry.tobacco,
+        ),
         packingComment: (row.packing_comment as string | null) ?? undefined,
         feedbacks,
         timeline: timelineByOrder.get(row.id as string) ?? [],
@@ -1493,7 +1715,7 @@ export class PostgresPlatformStore {
 
   private async loadParticipantTobaccos(
     participantIds: string[],
-  ): Promise<Map<string, TobaccoReference[]>> {
+  ): Promise<Map<string, OrderBlendComponentView[]>> {
     if (participantIds.length === 0) {
       return new Map();
     }
@@ -1502,6 +1724,7 @@ export class PostgresPlatformStore {
       `
         select
           participant_tobacco.participant_id::text as participant_id,
+          participant_tobacco.percentage,
           ${this.tobaccoProjectionSql()}
         from sales.order_participant_tobaccos participant_tobacco
         join catalog.tobaccos tobacco on tobacco.id = participant_tobacco.tobacco_id
@@ -1512,11 +1735,11 @@ export class PostgresPlatformStore {
       [participantIds],
     );
 
-    const map = new Map<string, TobaccoReference[]>();
+    const map = new Map<string, OrderBlendComponentView[]>();
 
     result.rows.forEach((row) => {
       const entries = map.get(row.participant_id as string) ?? [];
-      entries.push(this.mapTobacco(row));
+      entries.push(this.mapBlendRow(row));
       map.set(row.participant_id as string, entries);
     });
 
@@ -1525,11 +1748,12 @@ export class PostgresPlatformStore {
 
   private async loadActualTobaccos(
     orderIds: string[],
-  ): Promise<Map<string, TobaccoReference[]>> {
+  ): Promise<Map<string, OrderBlendComponentView[]>> {
     const result = await this.databaseService.query(
       `
         select
           actual_tobacco.order_id::text as order_id,
+          actual_tobacco.percentage,
           ${this.tobaccoProjectionSql()}
         from sales.order_actual_tobaccos actual_tobacco
         join catalog.tobaccos tobacco on tobacco.id = actual_tobacco.tobacco_id
@@ -1539,11 +1763,11 @@ export class PostgresPlatformStore {
       `,
       [orderIds],
     );
-    const map = new Map<string, TobaccoReference[]>();
+    const map = new Map<string, OrderBlendComponentView[]>();
 
     result.rows.forEach((row) => {
       const entries = map.get(row.order_id as string) ?? [];
-      entries.push(this.mapTobacco(row));
+      entries.push(this.mapBlendRow(row));
       map.set(row.order_id as string, entries);
     });
 
@@ -1758,6 +1982,28 @@ export class PostgresPlatformStore {
     }));
   }
 
+  private async listElectricHeads(): Promise<ElectricHeadReference[]> {
+    const result = await this.databaseService.query(
+      `
+        select
+          electric_head.id::text as id,
+          manufacturer.name as manufacturer,
+          electric_head.name
+        from equipment.electric_heads electric_head
+        join equipment.manufacturers manufacturer
+          on manufacturer.id = electric_head.manufacturer_id
+        order by manufacturer.name asc, electric_head.name asc
+      `,
+    );
+
+    return result.rows.map((row) => ({
+      id: row.id as string,
+      manufacturer: row.manufacturer as string,
+      name: row.name as string,
+      isActive: true,
+    }));
+  }
+
   private async findTobaccoById(id: string): Promise<TobaccoReference> {
     const tobacco = (await this.listTobaccos()).find((item) => item.id === id);
 
@@ -1808,6 +2054,20 @@ export class PostgresPlatformStore {
     }
 
     return charcoal;
+  }
+
+  private async findElectricHeadById(
+    id: string,
+  ): Promise<ElectricHeadReference> {
+    const electricHead = (await this.listElectricHeads()).find(
+      (item) => item.id === id,
+    );
+
+    if (!electricHead) {
+      throw new NotFoundException('Electric head not found');
+    }
+
+    return electricHead;
   }
 
   private async ensureManufacturer(name: string): Promise<string> {
@@ -1869,18 +2129,19 @@ export class PostgresPlatformStore {
   private async insertParticipantTobaccos(
     transaction: Queryable,
     participantId: string,
-    tobaccoIds: string[],
+    blend: Array<{ tobaccoId: string; percentage: number }>,
   ): Promise<void> {
-    for (const tobaccoId of tobaccoIds) {
+    for (const component of blend) {
       await transaction.query(
         `
           insert into sales.order_participant_tobaccos (
             participant_id,
-            tobacco_id
+            tobacco_id,
+            percentage
           )
-          values ($1, $2)
+          values ($1, $2, $3)
         `,
-        [participantId, tobaccoId],
+        [participantId, component.tobaccoId, component.percentage],
       );
     }
   }
@@ -1888,32 +2149,59 @@ export class PostgresPlatformStore {
   private async insertOrderTobaccos(
     transaction: Queryable,
     orderId: string,
-    tobaccoIds: string[],
+    blend: Array<{ tobaccoId: string; percentage: number }>,
   ): Promise<void> {
-    for (const tobaccoId of tobaccoIds) {
+    for (const component of blend) {
       await transaction.query(
         `
           insert into sales.order_actual_tobaccos (
             order_id,
-            tobacco_id
+            tobacco_id,
+            percentage
           )
-          values ($1, $2)
+          values ($1, $2, $3)
         `,
-        [orderId, tobaccoId],
+        [orderId, component.tobaccoId, component.percentage],
       );
     }
   }
 
-  private async validateTobaccoSelection(
-    tobaccoIds: string[],
+  private async validateBlendSelection(
+    blend: Array<{ tobaccoId: string; percentage: number }>,
     label: string,
-  ): Promise<string[]> {
-    const uniqueIds = [...new Set(tobaccoIds)];
+  ): Promise<Array<{ tobaccoId: string; percentage: number }>> {
+    if (!Array.isArray(blend)) {
+      throw new BadRequestException(`${label} should be an array`);
+    }
+
+    const normalizedBlend = blend.map((component) => ({
+      tobaccoId: this.requireString(component.tobaccoId, `${label}.tobaccoId`),
+      percentage: this.requirePercentageValue(
+        component.percentage,
+        `${label}.percentage`,
+      ),
+    }));
+    const uniqueIds = [
+      ...new Set(normalizedBlend.map((entry) => entry.tobaccoId)),
+    ];
 
     if (uniqueIds.length === 0 || uniqueIds.length > 3) {
       throw new BadRequestException(
         `${label} should contain from 1 to 3 tobaccos`,
       );
+    }
+
+    if (normalizedBlend.length !== uniqueIds.length) {
+      throw new BadRequestException(`${label} should not contain duplicates`);
+    }
+
+    const totalPercentage = normalizedBlend.reduce(
+      (sum, component) => sum + component.percentage,
+      0,
+    );
+
+    if (Math.abs(totalPercentage - 100) > 0.001) {
+      throw new BadRequestException(`${label} should sum to 100 percent`);
     }
 
     const result = await this.databaseService.query(
@@ -1925,7 +2213,7 @@ export class PostgresPlatformStore {
       throw new BadRequestException(`Unknown tobacco in ${label}`);
     }
 
-    return uniqueIds;
+    return normalizedBlend;
   }
 
   private async getOrderMeta(
@@ -2039,8 +2327,13 @@ export class PostgresPlatformStore {
       case ReferenceEntityType.Bowls:
       case ReferenceEntityType.Kalauds:
       case ReferenceEntityType.Charcoals:
+      case ReferenceEntityType.ElectricHeads:
         for (const item of items as unknown as Array<
-          HookahReference | BowlReference | KalaudReference | CharcoalReference
+          | HookahReference
+          | BowlReference
+          | KalaudReference
+          | CharcoalReference
+          | ElectricHeadReference
         >) {
           await this.createReference(
             resource,
@@ -2082,9 +2375,35 @@ export class PostgresPlatformStore {
               accepted_by_user_id,
               delivered_at,
               feedback_at,
-              packing_comment
+              packing_comment,
+              requested_heating_system_type,
+              requested_packing_style,
+              requested_custom_packing_style,
+              requested_hookah_id,
+              requested_bowl_id,
+              requested_kalaud_id,
+              requested_charcoal_id,
+              requested_electric_head_id,
+              requested_charcoal_count,
+              requested_warmup_mode,
+              requested_warmup_duration_minutes,
+              actual_heating_system_type,
+              actual_packing_style,
+              actual_custom_packing_style,
+              actual_hookah_id,
+              actual_bowl_id,
+              actual_kalaud_id,
+              actual_charcoal_id,
+              actual_electric_head_id,
+              actual_charcoal_count,
+              actual_warmup_mode,
+              actual_warmup_duration_minutes
             )
-            values ($1, $2, 'hookah', $3, 0, $4, $5, $6, $7, $8, $9)
+            values (
+              $1, $2, 'hookah', $3, 0, $4, $5, $6, $7, $8, $9,
+              $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20,
+              $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31
+            )
           `,
           [
             order.id,
@@ -2096,16 +2415,38 @@ export class PostgresPlatformStore {
             order.deliveredAt ?? null,
             order.feedbackAt ?? null,
             order.packingComment ?? null,
+            order.requestedSetup?.heatingSystemType ?? null,
+            order.requestedSetup?.packingStyle ?? null,
+            order.requestedSetup?.customPackingStyle ?? null,
+            order.requestedSetup?.hookah?.id ?? null,
+            order.requestedSetup?.bowl?.id ?? null,
+            order.requestedSetup?.kalaud?.id ?? null,
+            order.requestedSetup?.charcoal?.id ?? null,
+            order.requestedSetup?.electricHead?.id ?? null,
+            order.requestedSetup?.charcoalCount ?? null,
+            order.requestedSetup?.warmupMode ?? null,
+            order.requestedSetup?.warmupDurationMinutes ?? null,
+            order.actualSetup?.heatingSystemType ?? null,
+            order.actualSetup?.packingStyle ?? null,
+            order.actualSetup?.customPackingStyle ?? null,
+            order.actualSetup?.hookah?.id ?? null,
+            order.actualSetup?.bowl?.id ?? null,
+            order.actualSetup?.kalaud?.id ?? null,
+            order.actualSetup?.charcoal?.id ?? null,
+            order.actualSetup?.electricHead?.id ?? null,
+            order.actualSetup?.charcoalCount ?? null,
+            order.actualSetup?.warmupMode ?? null,
+            order.actualSetup?.warmupDurationMinutes ?? null,
           ],
         );
 
-        for (const tobacco of order.actualTobaccos) {
+        for (const component of order.actualBlend) {
           await transaction.query(
             `
-              insert into sales.order_actual_tobaccos (order_id, tobacco_id)
-              values ($1, $2)
+              insert into sales.order_actual_tobaccos (order_id, tobacco_id, percentage)
+              values ($1, $2, $3)
             `,
-            [order.id, tobacco.id],
+            [order.id, component.tobacco.id, component.percentage],
           );
         }
 
@@ -2138,16 +2479,17 @@ export class PostgresPlatformStore {
             ],
           );
 
-          for (const tobacco of participant.requestedTobaccos) {
+          for (const component of participant.requestedBlend) {
             await transaction.query(
               `
                 insert into sales.order_participant_tobaccos (
                   participant_id,
-                  tobacco_id
+                  tobacco_id,
+                  percentage
                 )
-                values ($1, $2)
+                values ($1, $2, $3)
               `,
-              [participantId, tobacco.id],
+              [participantId, component.tobacco.id, component.percentage],
             );
           }
 
@@ -2214,7 +2556,23 @@ export class PostgresPlatformStore {
       throw new BadRequestException('Backup payload must be an object');
     }
 
-    const backup = payload as BackupPayload;
+    const envelope = payload as Partial<BackupEnvelope>;
+
+    if (envelope.schemaVersion !== 'hookah-backup.v2') {
+      throw new BadRequestException('Unsupported backup schema version');
+    }
+
+    if (envelope.resource !== 'backup' || !envelope.payload) {
+      throw new BadRequestException('Backup envelope is invalid');
+    }
+
+    const checksumSha256 = this.computeBackupChecksum(envelope.payload);
+
+    if (checksumSha256 !== envelope.checksumSha256) {
+      throw new BadRequestException('Backup checksum validation failed');
+    }
+
+    const backup = envelope.payload;
     await this.databaseService.withTransaction(async (transaction) => {
       await transaction.query(`delete from sales.order_feedbacks`);
       await transaction.query(`delete from sales.order_actual_tobaccos`);
@@ -2226,6 +2584,7 @@ export class PostgresPlatformStore {
       await transaction.query(`delete from recipes.packing_tobaccos`);
       await transaction.query(`delete from recipes.packings`);
       await transaction.query(`delete from equipment.charcoals`);
+      await transaction.query(`delete from equipment.electric_heads`);
       await transaction.query(`delete from equipment.kalauds`);
       await transaction.query(`delete from equipment.hookahs`);
       await transaction.query(`delete from equipment.bowls`);
@@ -2256,7 +2615,30 @@ export class PostgresPlatformStore {
       ReferenceEntityType.Charcoals,
       backup.references?.charcoals ?? [],
     );
+    await this.importReferences(
+      ReferenceEntityType.ElectricHeads,
+      backup.references?.electricHeads ?? [],
+    );
     await this.importOrders(backup.orders ?? []);
+
+    await this.writeBackupAuditEvent({
+      resourceName: 'backup',
+      actionName: 'import',
+      schemaVersion: envelope.schemaVersion,
+      checksumSha256,
+      itemCount:
+        (backup.users?.length ?? 0) +
+        (backup.orders?.length ?? 0) +
+        (backup.references?.tobaccos?.length ?? 0) +
+        (backup.references?.hookahs?.length ?? 0) +
+        (backup.references?.bowls?.length ?? 0) +
+        (backup.references?.kalauds?.length ?? 0) +
+        (backup.references?.charcoals?.length ?? 0) +
+        (backup.references?.electricHeads?.length ?? 0),
+      details: {
+        importedAt: new Date().toISOString(),
+      },
+    });
 
     return {
       importedCount:
@@ -2266,7 +2648,8 @@ export class PostgresPlatformStore {
         (backup.references?.hookahs?.length ?? 0) +
         (backup.references?.bowls?.length ?? 0) +
         (backup.references?.kalauds?.length ?? 0) +
-        (backup.references?.charcoals?.length ?? 0),
+        (backup.references?.charcoals?.length ?? 0) +
+        (backup.references?.electricHeads?.length ?? 0),
     };
   }
 
@@ -2394,8 +2777,76 @@ export class PostgresPlatformStore {
     };
   }
 
+  private mapBlendRow(row: DatabaseRow): OrderBlendComponentView {
+    return {
+      tobacco: this.mapTobacco(row),
+      percentage: Number(row.percentage),
+    };
+  }
+
   private deduplicateTobaccos(items: TobaccoReference[]): TobaccoReference[] {
     return [...new Map(items.map((item) => [item.id, item])).values()];
+  }
+
+  private deduplicateBlendComponents(
+    items: OrderBlendComponentView[],
+  ): OrderBlendComponentView[] {
+    return [
+      ...new Map(items.map((item) => [item.tobacco.id, item])).values(),
+    ].sort((left, right) =>
+      left.tobacco.flavorName.localeCompare(right.tobacco.flavorName),
+    );
+  }
+
+  private resolveOrderSetupView(
+    row: Record<string, unknown>,
+    prefix: 'requested' | 'actual',
+    references: ReferencesSnapshot,
+  ): OrderSetupView | undefined {
+    const heatingSystemType = row[`${prefix}_heating_system_type`] as
+      | HeatingSystemType
+      | null
+      | undefined;
+
+    if (!heatingSystemType) {
+      return undefined;
+    }
+
+    return {
+      heatingSystemType,
+      packingStyle:
+        (row[`${prefix}_packing_style`] as PackingStyle | null) ?? undefined,
+      customPackingStyle:
+        (row[`${prefix}_custom_packing_style`] as string | null) ?? undefined,
+      hookah:
+        references.hookahs.find(
+          (item) => item.id === row[`${prefix}_hookah_id`],
+        ) ?? undefined,
+      bowl:
+        references.bowls.find((item) => item.id === row[`${prefix}_bowl_id`]) ??
+        undefined,
+      kalaud:
+        references.kalauds.find(
+          (item) => item.id === row[`${prefix}_kalaud_id`],
+        ) ?? undefined,
+      charcoal:
+        references.charcoals.find(
+          (item) => item.id === row[`${prefix}_charcoal_id`],
+        ) ?? undefined,
+      electricHead:
+        references.electricHeads.find(
+          (item) => item.id === row[`${prefix}_electric_head_id`],
+        ) ?? undefined,
+      charcoalCount: row[`${prefix}_charcoal_count`]
+        ? Number(row[`${prefix}_charcoal_count`])
+        : undefined,
+      warmupMode:
+        (row[`${prefix}_warmup_mode`] as 'with_cap' | 'without_cap' | null) ??
+        undefined,
+      warmupDurationMinutes: row[`${prefix}_warmup_duration_minutes`]
+        ? Number(row[`${prefix}_warmup_duration_minutes`])
+        : undefined,
+    };
   }
 
   private buildStableCode(prefix: string, value: string): string {
@@ -2461,6 +2912,181 @@ export class PostgresPlatformStore {
     }
 
     return value;
+  }
+
+  private requirePercentageValue(
+    value: string | number | boolean | undefined,
+    label: string,
+  ): number {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      throw new BadRequestException(`${label} must be a positive number`);
+    }
+
+    return Number(value.toFixed(2));
+  }
+
+  private async validateOrderSetupInput(
+    input: OrderSetupInput,
+    label: string,
+  ): Promise<OrderSetupInput> {
+    if (!input || typeof input !== 'object') {
+      throw new BadRequestException(`${label} must be an object`);
+    }
+
+    if (
+      input.heatingSystemType !== HeatingSystemType.Coal &&
+      input.heatingSystemType !== HeatingSystemType.Electric
+    ) {
+      throw new BadRequestException(`${label}.heatingSystemType is invalid`);
+    }
+
+    if (
+      input.packingStyle !== undefined &&
+      input.packingStyle !== PackingStyle.Layers &&
+      input.packingStyle !== PackingStyle.Sectors &&
+      input.packingStyle !== PackingStyle.Kompot &&
+      input.packingStyle !== PackingStyle.Custom
+    ) {
+      throw new BadRequestException(`${label}.packingStyle is invalid`);
+    }
+
+    const setup: OrderSetupInput = {
+      heatingSystemType: input.heatingSystemType,
+      packingStyle: input.packingStyle,
+      customPackingStyle: this.normalizeOptionalValue(input.customPackingStyle),
+      hookahId: input.hookahId
+        ? this.requireString(input.hookahId, `${label}.hookahId`)
+        : undefined,
+      bowlId: input.bowlId
+        ? this.requireString(input.bowlId, `${label}.bowlId`)
+        : undefined,
+      kalaudId: input.kalaudId
+        ? this.requireString(input.kalaudId, `${label}.kalaudId`)
+        : undefined,
+      charcoalId: input.charcoalId
+        ? this.requireString(input.charcoalId, `${label}.charcoalId`)
+        : undefined,
+      electricHeadId: input.electricHeadId
+        ? this.requireString(input.electricHeadId, `${label}.electricHeadId`)
+        : undefined,
+      charcoalCount:
+        input.charcoalCount !== undefined
+          ? this.requirePositiveNumber(
+              input.charcoalCount,
+              `${label}.charcoalCount`,
+            )
+          : undefined,
+      warmupMode:
+        input.warmupMode === 'with_cap' || input.warmupMode === 'without_cap'
+          ? input.warmupMode
+          : undefined,
+      warmupDurationMinutes:
+        input.warmupDurationMinutes !== undefined
+          ? this.requirePositiveNumber(
+              input.warmupDurationMinutes,
+              `${label}.warmupDurationMinutes`,
+            )
+          : undefined,
+    };
+
+    if (
+      setup.packingStyle === PackingStyle.Custom &&
+      !setup.customPackingStyle
+    ) {
+      throw new BadRequestException(
+        `${label}.customPackingStyle is required for custom packing style`,
+      );
+    }
+
+    if (setup.heatingSystemType === HeatingSystemType.Coal) {
+      if (
+        !setup.hookahId ||
+        !setup.bowlId ||
+        !setup.kalaudId ||
+        !setup.charcoalId
+      ) {
+        throw new BadRequestException(
+          `${label} requires hookah, bowl, kalaud and charcoal for coal setup`,
+        );
+      }
+      if (setup.charcoalCount === undefined) {
+        throw new BadRequestException(`${label}.charcoalCount is required`);
+      }
+      if (!setup.warmupMode || setup.warmupDurationMinutes === undefined) {
+        throw new BadRequestException(
+          `${label} requires warmup mode and duration for coal setup`,
+        );
+      }
+      await Promise.all([
+        this.findHookahById(setup.hookahId),
+        this.findBowlById(setup.bowlId),
+        this.findKalaudById(setup.kalaudId),
+        this.findCharcoalById(setup.charcoalId),
+      ]);
+      return {
+        ...setup,
+        electricHeadId: undefined,
+      };
+    }
+
+    if (!setup.hookahId || !setup.electricHeadId) {
+      throw new BadRequestException(
+        `${label} requires hookah and electric head for electric setup`,
+      );
+    }
+
+    await Promise.all([
+      this.findHookahById(setup.hookahId),
+      this.findElectricHeadById(setup.electricHeadId),
+    ]);
+
+    return {
+      ...setup,
+      bowlId: undefined,
+      kalaudId: undefined,
+      charcoalId: undefined,
+      charcoalCount: undefined,
+      warmupMode: undefined,
+      warmupDurationMinutes: undefined,
+    };
+  }
+
+  private computeBackupChecksum(payload: BackupPayload): string {
+    return createHash('sha256').update(JSON.stringify(payload)).digest('hex');
+  }
+
+  private async writeBackupAuditEvent(input: {
+    actorUserId?: string;
+    resourceName: string;
+    actionName: string;
+    schemaVersion: string;
+    checksumSha256: string;
+    itemCount: number;
+    details: Record<string, unknown>;
+  }): Promise<void> {
+    await this.databaseService.query(
+      `
+        insert into support.backup_audit_events (
+          actor_user_id,
+          resource_name,
+          action_name,
+          schema_version,
+          checksum_sha256,
+          item_count,
+          details
+        )
+        values ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      `,
+      [
+        input.actorUserId ?? null,
+        input.resourceName,
+        input.actionName,
+        input.schemaVersion,
+        input.checksumSha256,
+        input.itemCount,
+        JSON.stringify(input.details),
+      ],
+    );
   }
 
   private requireBowlType(

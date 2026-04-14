@@ -5,12 +5,15 @@ import type {
   AppUser,
   BowlReference,
   CharcoalReference,
+  ElectricHeadReference,
   HookahReference,
   KalaudReference,
+  OrderSetupInput,
   OrderView,
   ReferencesSnapshot,
   StoredUser,
   TobaccoReference,
+  BlendComponentInput,
   UpsertReferencePayload,
 } from './platform.models';
 import { ReferenceEntityType, UserRole } from './platform.models';
@@ -119,6 +122,7 @@ export class PlatformDataService {
     | BowlReference
     | KalaudReference
     | CharcoalReference
+    | ElectricHeadReference
   > {
     return this.databaseService.isEnabled()
       ? await this.postgresPlatformStore.createReference(type, payload)
@@ -135,6 +139,7 @@ export class PlatformDataService {
     | BowlReference
     | KalaudReference
     | CharcoalReference
+    | ElectricHeadReference
   > {
     return this.databaseService.isEnabled()
       ? await this.postgresPlatformStore.updateReference(type, id, payload)
@@ -161,7 +166,8 @@ export class PlatformDataService {
     input: {
       tableLabel: string;
       description: string;
-      requestedTobaccoIds: string[];
+      requestedBlend: BlendComponentInput[];
+      requestedSetup: OrderSetupInput;
     },
   ): Promise<OrderView> {
     return this.databaseService.isEnabled()
@@ -196,7 +202,11 @@ export class PlatformDataService {
   async fulfillOrder(
     orderId: string,
     actorUserId: string,
-    input: { actualTobaccoIds: string[]; packingComment: string },
+    input: {
+      actualBlend: BlendComponentInput[];
+      actualSetup: OrderSetupInput;
+      packingComment: string;
+    },
   ): Promise<OrderView> {
     return this.databaseService.isEnabled()
       ? await this.postgresPlatformStore.fulfillOrder(
