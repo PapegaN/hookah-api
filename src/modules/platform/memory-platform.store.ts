@@ -610,6 +610,7 @@ export class MemoryPlatformStore {
       brand: this.requireString(payload.brand, 'brand'),
       line: this.requireString(payload.line, 'line'),
       flavorName: this.requireString(payload.flavorName, 'flavorName'),
+      markingCode: this.normalizeOptionalValue(payload.markingCode),
       lineStrengthLevel: this.requireScaleValue(
         payload.lineStrengthLevel,
         'lineStrengthLevel',
@@ -645,6 +646,8 @@ export class MemoryPlatformStore {
       item.line = this.requireString(payload.line, 'line');
     if (payload.flavorName !== undefined)
       item.flavorName = this.requireString(payload.flavorName, 'flavorName');
+    if (payload.markingCode !== undefined)
+      item.markingCode = this.normalizeOptionalValue(payload.markingCode);
     if (payload.lineStrengthLevel !== undefined)
       item.lineStrengthLevel = this.requireScaleValue(
         payload.lineStrengthLevel,
@@ -1191,6 +1194,7 @@ export class MemoryPlatformStore {
       brand: 'Darkside',
       line: 'Core',
       flavorName: 'Bounty Hunter',
+      markingCode: '0104607001774080215DBOUNTY00191MEM000001',
       lineStrengthLevel: 4,
       estimatedStrengthLevel: 4,
       brightnessLevel: 3,
@@ -1205,6 +1209,7 @@ export class MemoryPlatformStore {
       brand: 'Must Have',
       line: 'Classic',
       flavorName: 'Pinkman',
+      markingCode: '0104607001774080215MPINKMAN0191MEM000002',
       lineStrengthLevel: 3,
       estimatedStrengthLevel: 3,
       brightnessLevel: 5,
@@ -1221,6 +1226,7 @@ export class MemoryPlatformStore {
       brand: 'Black Burn',
       line: 'Base',
       flavorName: 'Mint Shock',
+      markingCode: '0104607001774080215BMINTSHK0391MEM000003',
       lineStrengthLevel: 4,
       estimatedStrengthLevel: 4,
       brightnessLevel: 4,

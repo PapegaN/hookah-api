@@ -25,6 +25,11 @@ export class UpsertReferenceItemDto {
   @IsString()
   flavorName?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  markingCode?: string;
+
   @ApiPropertyOptional({ minimum: 1, maximum: 5 })
   @IsOptional()
   @IsNumber()

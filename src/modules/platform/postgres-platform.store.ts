@@ -1131,6 +1131,7 @@ export class PostgresPlatformStore {
       lineName,
       lineStrengthLevel,
     );
+    const markingCode = this.normalizeOptionalValue(payload.markingCode);
 
     const tobaccoId = randomUUID();
     const tagIds = await this.resolveTobaccoTagIds(payload.flavorTags);
@@ -1144,13 +1145,14 @@ export class PostgresPlatformStore {
             code,
             name,
             flavor_profile,
+            marking_code,
             flavor_description,
             estimated_strength_level,
             brightness_level,
             in_stock,
             is_active
           )
-          values ($1, $2, $3, $4, '{}'::text[], $5, $6, $7, $8, $9)
+          values ($1, $2, $3, $4, '{}'::text[], $5, $6, $7, $8, $9, $10)
         `,
         [
           tobaccoId,
@@ -1160,6 +1162,7 @@ export class PostgresPlatformStore {
             `${brandName}:${lineName}:${flavorName}`,
           ),
           flavorName,
+          markingCode ?? null,
           this.requireString(payload.flavorDescription, 'flavorDescription'),
           this.requireScaleValue(
             payload.estimatedStrengthLevel,
@@ -1208,6 +1211,10 @@ export class PostgresPlatformStore {
       payload.flavorTags !== undefined
         ? await this.resolveTobaccoTagIds(payload.flavorTags)
         : existing.flavorTags.map((tag) => tag.id);
+    const markingCode =
+      payload.markingCode !== undefined
+        ? this.normalizeOptionalValue(payload.markingCode)
+        : existing.markingCode;
 
     await this.databaseService.withTransaction(async (transaction) => {
       await transaction.query(
@@ -1217,11 +1224,12 @@ export class PostgresPlatformStore {
             line_id = $2,
             code = $3,
             name = $4,
-            flavor_description = $5,
-            estimated_strength_level = $6,
-            brightness_level = $7,
-            in_stock = $8,
-            is_active = $9
+            marking_code = $5,
+            flavor_description = $6,
+            estimated_strength_level = $7,
+            brightness_level = $8,
+            in_stock = $9,
+            is_active = $10
           where id = $1
         `,
         [
@@ -1232,6 +1240,7 @@ export class PostgresPlatformStore {
             `${brandName}:${lineName}:${flavorName}`,
           ),
           flavorName,
+          markingCode ?? null,
           payload.flavorDescription !== undefined
             ? this.requireString(payload.flavorDescription, 'flavorDescription')
             : existing.flavorDescription,
@@ -2564,10 +2573,24 @@ export class PostgresPlatformStore {
     switch (resource) {
       case ReferenceEntityType.Tobaccos:
         for (const item of items as unknown as TobaccoReference[]) {
-          await this.createReference(resource, {
-            ...item,
+          const tobaccoPayload: UpsertReferencePayload = {
+            brand: item.brand,
+            line: item.line,
+            flavorName: item.flavorName,
+            lineStrengthLevel: item.lineStrengthLevel,
+            estimatedStrengthLevel: item.estimatedStrengthLevel,
+            brightnessLevel: item.brightnessLevel,
+            flavorDescription: item.flavorDescription,
             flavorTags: item.flavorTags.map((tag) => tag.name),
-          });
+            inStock: item.inStock,
+            isActive: item.isActive,
+          };
+
+          if (item.markingCode) {
+            tobaccoPayload.markingCode = item.markingCode;
+          }
+
+          await this.createReference(resource, tobaccoPayload);
           importedCount += 1;
         }
         break;
@@ -2951,6 +2974,7 @@ export class PostgresPlatformStore {
       brand.name as brand,
       product_line.name as line,
       tobacco.name as flavor_name,
+      tobacco.marking_code,
       product_line.strength_level as line_strength_level,
       coalesce(tobacco.estimated_strength_level, product_line.strength_level) as estimated_strength_level,
       coalesce(tobacco.brightness_level, 3) as brightness_level,
@@ -3067,6 +3091,7 @@ export class PostgresPlatformStore {
       brand: row.brand as string,
       line: row.line as string,
       flavorName: row.flavor_name as string,
+      markingCode: (row.marking_code as string | null) ?? undefined,
       lineStrengthLevel: Number(row.line_strength_level),
       estimatedStrengthLevel: Number(row.estimated_strength_level),
       brightnessLevel: Number(row.brightness_level),
