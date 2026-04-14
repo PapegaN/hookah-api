@@ -82,6 +82,7 @@ export interface TobaccoReference {
   line: string;
   flavorName: string;
   markingCode: string | undefined;
+  markingGtin: string | undefined;
   lineStrengthLevel: number;
   estimatedStrengthLevel: number;
   brightnessLevel: number;
@@ -308,6 +309,7 @@ export interface UpsertReferencePayload {
   line?: string;
   flavorName?: string;
   markingCode?: string;
+  markingGtin?: string;
   lineStrengthLevel?: number;
   estimatedStrengthLevel?: number;
   brightnessLevel?: number;

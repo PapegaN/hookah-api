@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -103,7 +103,7 @@ export class MemoryPlatformStore {
     const ts = new Date().toISOString();
     this.orders.push({
       id: randomUUID(),
-      tableLabel: 'РЎС‚РѕР» 3',
+      tableLabel: 'Стол 3',
       status: OrderStatus.New,
       createdAt: ts,
       updatedAt: ts,
@@ -129,8 +129,7 @@ export class MemoryPlatformStore {
       participants: [
         {
           clientUserId: client.id,
-          description:
-            'РҐРѕС‡Сѓ СЏРіРѕРґРЅС‹Р№ РјРёРєСЃ СЃ С…РѕР»РѕРґРєРѕРј Рё РјСЏРіРєРѕР№ РєСЂРµРїРѕСЃС‚СЊСЋ.',
+          description: 'Хочу ягодный микс с холодком и мягкой крепостью.',
           requestedBlend: [
             { tobaccoId: this.tobaccos[1]!.id, percentage: 70 },
             { tobaccoId: this.tobaccos[2]!.id, percentage: 30 },
@@ -151,7 +150,7 @@ export class MemoryPlatformStore {
           status: OrderStatus.New,
           occurredAt: ts,
           actorUserId: client.id,
-          note: 'РљР»РёРµРЅС‚ СЃРѕР·РґР°Р» Р·Р°РєР°Р· РґР»СЏ СЃС‚РѕР»Р° 3.',
+          note: 'Клиент создал заказ для стола 3.',
         }),
       ],
     });
@@ -407,7 +406,7 @@ export class MemoryPlatformStore {
           status: OrderStatus.New,
           occurredAt: timestamp,
           actorUserId: clientUserId,
-          note: `${client.login} СЃРѕР·РґР°Р» Р·Р°РєР°Р· РґР»СЏ СЃС‚РѕР»Р° ${tableLabel}.`,
+          note: `${client.login} создал заказ для стола ${tableLabel}.`,
         }),
       ],
     };
@@ -611,6 +610,10 @@ export class MemoryPlatformStore {
       line: this.requireString(payload.line, 'line'),
       flavorName: this.requireString(payload.flavorName, 'flavorName'),
       markingCode: this.normalizeOptionalValue(payload.markingCode),
+      markingGtin: this.resolveMarkingGtin(
+        this.normalizeOptionalValue(payload.markingCode),
+        payload.markingGtin,
+      ),
       lineStrengthLevel: this.requireScaleValue(
         payload.lineStrengthLevel,
         'lineStrengthLevel',
@@ -648,6 +651,11 @@ export class MemoryPlatformStore {
       item.flavorName = this.requireString(payload.flavorName, 'flavorName');
     if (payload.markingCode !== undefined)
       item.markingCode = this.normalizeOptionalValue(payload.markingCode);
+    if (payload.markingCode !== undefined || payload.markingGtin !== undefined)
+      item.markingGtin = this.resolveMarkingGtin(
+        item.markingCode,
+        payload.markingGtin,
+      );
     if (payload.lineStrengthLevel !== undefined)
       item.lineStrengthLevel = this.requireScaleValue(
         payload.lineStrengthLevel,
@@ -1157,6 +1165,32 @@ export class MemoryPlatformStore {
     return normalized.length > 0 ? normalized : undefined;
   }
 
+  private resolveMarkingGtin(
+    markingCode: string | undefined,
+    fallback: string | number | boolean | undefined,
+  ): string | undefined {
+    const extracted = this.extractMarkingGtin(markingCode);
+
+    if (extracted) {
+      return extracted;
+    }
+
+    return this.normalizeOptionalValue(fallback);
+  }
+
+  private extractMarkingGtin(
+    markingCode: string | undefined,
+  ): string | undefined {
+    if (!markingCode) {
+      return undefined;
+    }
+
+    const normalized = markingCode.split('\u001d').join('').trim();
+    const match = normalized.match(/01(\d{14})/);
+
+    return match?.[1];
+  }
+
   private resolveTobaccoTags(
     input: string[] | string | undefined,
   ): TobaccoTagReference[] {
@@ -1175,17 +1209,17 @@ export class MemoryPlatformStore {
   private seedReferences(): void {
     this.tobaccoTags.push({
       id: randomUUID(),
-      name: 'РњСЏС‚РЅС‹Р№',
+      name: 'Мятный',
       isActive: true,
     });
     this.tobaccoTags.push({
       id: randomUUID(),
-      name: 'РЇРіРѕРґРЅС‹Р№',
+      name: 'Ягодный',
       isActive: true,
     });
     this.tobaccoTags.push({
       id: randomUUID(),
-      name: 'Р¤СЂСѓРєС‚РѕРІС‹Р№',
+      name: 'Фруктовый',
       isActive: true,
     });
 
@@ -1195,11 +1229,11 @@ export class MemoryPlatformStore {
       line: 'Core',
       flavorName: 'Bounty Hunter',
       markingCode: '0104607001774080215DBOUNTY00191MEM000001',
+      markingGtin: '04607001774080',
       lineStrengthLevel: 4,
       estimatedStrengthLevel: 4,
       brightnessLevel: 3,
-      flavorDescription:
-        'РЁРѕРєРѕР»Р°РґРЅРѕ-РєРѕРєРѕСЃРѕРІС‹Р№ РґРµСЃРµСЂС‚РЅС‹Р№ РІРєСѓСЃ.',
+      flavorDescription: 'Шоколадно-кокосовый десертный вкус.',
       flavorTags: [],
       inStock: true,
       isActive: true,
@@ -1209,14 +1243,14 @@ export class MemoryPlatformStore {
       brand: 'Must Have',
       line: 'Classic',
       flavorName: 'Pinkman',
-      markingCode: '0104607001774080215MPINKMAN0191MEM000002',
+      markingCode: '0104607001774097215MPINKMAN0191MEM000002',
+      markingGtin: '04607001774097',
       lineStrengthLevel: 3,
       estimatedStrengthLevel: 3,
       brightnessLevel: 5,
-      flavorDescription:
-        'РЇСЂРєРёР№ СЏРіРѕРґРЅС‹Р№ РјРёРєСЃ СЃ С†РёС‚СЂСѓСЃРѕРІРѕР№ СЃРІРµР¶РµСЃС‚СЊСЋ.',
+      flavorDescription: 'Яркий ягодный микс с цитрусовой свежестью.',
       flavorTags: this.tobaccoTags.filter((tag) =>
-        ['РЇРіРѕРґРЅС‹Р№', 'Р¤СЂСѓРєС‚РѕРІС‹Р№'].includes(tag.name),
+        ['Ягодный', 'Фруктовый'].includes(tag.name),
       ),
       inStock: true,
       isActive: true,
@@ -1226,13 +1260,13 @@ export class MemoryPlatformStore {
       brand: 'Black Burn',
       line: 'Base',
       flavorName: 'Mint Shock',
-      markingCode: '0104607001774080215BMINTSHK0391MEM000003',
+      markingCode: '0104607001774103215BMINTSHK0391MEM000003',
+      markingGtin: '04607001774103',
       lineStrengthLevel: 4,
       estimatedStrengthLevel: 4,
       brightnessLevel: 4,
-      flavorDescription:
-        'РњРѕС‰РЅР°СЏ РјСЏС‚Р° СЃ РІС‹СЂР°Р¶РµРЅРЅС‹Рј С…РѕР»РѕРґРєРѕРј.',
-      flavorTags: this.tobaccoTags.filter((tag) => tag.name === 'РњСЏС‚РЅС‹Р№'),
+      flavorDescription: 'Мощная мята с выраженным холодком.',
+      flavorTags: this.tobaccoTags.filter((tag) => tag.name === 'Мятный'),
       inStock: true,
       isActive: true,
     });
@@ -1249,7 +1283,7 @@ export class MemoryPlatformStore {
       manufacturer: 'Werkbund',
       name: 'Turkish Killer',
       bowlType: 'killer',
-      material: 'Р“Р»РёРЅР°',
+      material: 'Глина',
       capacityBucket: 'medium',
       isActive: true,
     });
@@ -1257,15 +1291,15 @@ export class MemoryPlatformStore {
       id: randomUUID(),
       manufacturer: 'Na Grani',
       name: 'HMD Pro',
-      material: 'РђР»СЋРјРёРЅРёР№',
-      color: 'Р§С‘СЂРЅС‹Р№',
+      material: 'Алюминий',
+      color: 'Чёрный',
       isActive: true,
     });
     this.charcoals.push({
       id: randomUUID(),
       manufacturer: 'CocoUrth',
       name: 'Cube',
-      sizeLabel: '25 РјРј',
+      sizeLabel: '25 мм',
       isActive: true,
     });
     this.electricHeads.push({

@@ -1,4 +1,4 @@
-﻿import {
+import {
   BadRequestException,
   Injectable,
   NotFoundException,
@@ -465,7 +465,7 @@ export class PostgresPlatformStore {
               existingOrderId,
               OrderTimelineEventType.ParticipantJoined,
               clientUserId,
-              `${client.login} присоединился к заказу стола ${tableLabel}.`,
+              `${client.login} ������������� � ������ ����� ${tableLabel}.`,
             ],
           );
 
@@ -566,7 +566,7 @@ export class PostgresPlatformStore {
             OrderTimelineEventType.Created,
             OrderStatus.New,
             clientUserId,
-            `${client.login} создал заказ для стола ${tableLabel}.`,
+            `${client.login} ������ ����� ��� ����� ${tableLabel}.`,
           ],
         );
 
@@ -646,7 +646,7 @@ export class PostgresPlatformStore {
           orderId,
           OrderTimelineEventType.ParticipantTableApproved,
           actorUserId,
-          `${client.login} подтвержден за ${await this.getOrderTableLabel(
+          `${client.login} ����������� �� ${await this.getOrderTableLabel(
             orderId,
             transaction,
           )}.`,
@@ -700,7 +700,7 @@ export class PostgresPlatformStore {
           OrderTimelineEventType.Started,
           OrderStatus.InProgress,
           actorUserId,
-          `Заказ для ${order.tableLabel} взят в работу.`,
+          `����� ��� ${order.tableLabel} ���� � ������.`,
         ],
       );
     });
@@ -809,7 +809,7 @@ export class PostgresPlatformStore {
           OrderTimelineEventType.Delivered,
           OrderStatus.ReadyForFeedback,
           actorUserId,
-          `Заказ для ${order.tableLabel} отдан клиентам.`,
+          `����� ��� ${order.tableLabel} ����� ��������.`,
         ],
       );
     });
@@ -945,7 +945,7 @@ export class PostgresPlatformStore {
           OrderTimelineEventType.FeedbackReceived,
           nextStatus,
           actor.id,
-          `${actor.login} оставил отзыв по заказу ${order.tableLabel}.`,
+          `${actor.login} ������� ����� �� ������ ${order.tableLabel}.`,
         ],
       );
     });
@@ -1132,6 +1132,10 @@ export class PostgresPlatformStore {
       lineStrengthLevel,
     );
     const markingCode = this.normalizeOptionalValue(payload.markingCode);
+    const markingGtin = this.resolveMarkingGtin(
+      markingCode,
+      payload.markingGtin,
+    );
 
     const tobaccoId = randomUUID();
     const tagIds = await this.resolveTobaccoTagIds(payload.flavorTags);
@@ -1146,13 +1150,14 @@ export class PostgresPlatformStore {
             name,
             flavor_profile,
             marking_code,
+            marking_gtin,
             flavor_description,
             estimated_strength_level,
             brightness_level,
             in_stock,
             is_active
           )
-          values ($1, $2, $3, $4, '{}'::text[], $5, $6, $7, $8, $9, $10)
+          values ($1, $2, $3, $4, '{}'::text[], $5, $6, $7, $8, $9, $10, $11)
         `,
         [
           tobaccoId,
@@ -1163,6 +1168,7 @@ export class PostgresPlatformStore {
           ),
           flavorName,
           markingCode ?? null,
+          markingGtin ?? null,
           this.requireString(payload.flavorDescription, 'flavorDescription'),
           this.requireScaleValue(
             payload.estimatedStrengthLevel,
@@ -1215,6 +1221,12 @@ export class PostgresPlatformStore {
       payload.markingCode !== undefined
         ? this.normalizeOptionalValue(payload.markingCode)
         : existing.markingCode;
+    const markingGtin = this.resolveMarkingGtin(
+      markingCode,
+      payload.markingGtin !== undefined
+        ? payload.markingGtin
+        : existing.markingGtin,
+    );
 
     await this.databaseService.withTransaction(async (transaction) => {
       await transaction.query(
@@ -1225,11 +1237,12 @@ export class PostgresPlatformStore {
             code = $3,
             name = $4,
             marking_code = $5,
-            flavor_description = $6,
-            estimated_strength_level = $7,
-            brightness_level = $8,
-            in_stock = $9,
-            is_active = $10
+            marking_gtin = $6,
+            flavor_description = $7,
+            estimated_strength_level = $8,
+            brightness_level = $9,
+            in_stock = $10,
+            is_active = $11
           where id = $1
         `,
         [
@@ -1241,6 +1254,7 @@ export class PostgresPlatformStore {
           ),
           flavorName,
           markingCode ?? null,
+          markingGtin ?? null,
           payload.flavorDescription !== undefined
             ? this.requireString(payload.flavorDescription, 'flavorDescription')
             : existing.flavorDescription,
@@ -1860,7 +1874,7 @@ export class PostgresPlatformStore {
 
       return {
         id: row.id as string,
-        tableLabel: (row.table_label as string) ?? 'Стол без номера',
+        tableLabel: (row.table_label as string) ?? '���� ��� ������',
         status: row.status as OrderStatus,
         createdAt: this.toIsoString(row.created_at),
         updatedAt: this.toIsoString(row.updated_at),
@@ -2496,7 +2510,7 @@ export class PostgresPlatformStore {
     }
 
     return {
-      tableLabel: (row.table_label as string) ?? 'Стол без номера',
+      tableLabel: (row.table_label as string) ?? '���� ��� ������',
       status: row.status as OrderStatus,
     };
   }
@@ -2588,6 +2602,10 @@ export class PostgresPlatformStore {
 
           if (item.markingCode) {
             tobaccoPayload.markingCode = item.markingCode;
+          }
+
+          if (item.markingGtin) {
+            tobaccoPayload.markingGtin = item.markingGtin;
           }
 
           await this.createReference(resource, tobaccoPayload);
@@ -2975,6 +2993,7 @@ export class PostgresPlatformStore {
       product_line.name as line,
       tobacco.name as flavor_name,
       tobacco.marking_code,
+      tobacco.marking_gtin,
       product_line.strength_level as line_strength_level,
       coalesce(tobacco.estimated_strength_level, product_line.strength_level) as estimated_strength_level,
       coalesce(tobacco.brightness_level, 3) as brightness_level,
@@ -3092,6 +3111,7 @@ export class PostgresPlatformStore {
       line: row.line as string,
       flavorName: row.flavor_name as string,
       markingCode: (row.marking_code as string | null) ?? undefined,
+      markingGtin: (row.marking_gtin as string | null) ?? undefined,
       lineStrengthLevel: Number(row.line_strength_level),
       estimatedStrengthLevel: Number(row.estimated_strength_level),
       brightnessLevel: Number(row.brightness_level),
@@ -3461,6 +3481,32 @@ export class PostgresPlatformStore {
     const normalized = value.trim();
 
     return normalized.length > 0 ? normalized : undefined;
+  }
+
+  private resolveMarkingGtin(
+    markingCode: string | undefined,
+    fallback: string | number | boolean | undefined,
+  ): string | undefined {
+    const extracted = this.extractMarkingGtin(markingCode);
+
+    if (extracted) {
+      return extracted;
+    }
+
+    return this.normalizeOptionalValue(fallback);
+  }
+
+  private extractMarkingGtin(
+    markingCode: string | undefined,
+  ): string | undefined {
+    if (!markingCode) {
+      return undefined;
+    }
+
+    const normalized = markingCode.split('\u001d').join('').trim();
+    const match = normalized.match(/01(\d{14})/);
+
+    return match?.[1];
   }
 
   private handleConstraintError(error: unknown): never {

@@ -30,6 +30,11 @@ export class UpsertReferenceItemDto {
   @IsString()
   markingCode?: string;
 
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  markingGtin?: string;
+
   @ApiPropertyOptional({ minimum: 1, maximum: 5 })
   @IsOptional()
   @IsNumber()
