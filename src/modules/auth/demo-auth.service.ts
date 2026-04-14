@@ -1,4 +1,8 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import {
   randomBytes,
   randomUUID,
@@ -9,6 +13,11 @@ import { PlatformDataService } from '../platform/platform-data.service';
 import type { AppUser } from '../platform/platform.models';
 import { UserRole } from '../platform/platform.models';
 import type { AuthResponse } from './auth.types';
+
+// Демо-авторизация доступна только в режиме разработки.
+// В production эндпоинты с учётными данными демо-стенда отключены,
+// чтобы исключить риск утечки паролей через служебные методы.
+const DEMO_ALLOWED = process.env.NODE_ENV !== 'production';
 
 @Injectable()
 export class DemoAuthService {
@@ -81,18 +90,38 @@ export class DemoAuthService {
       : undefined;
   }
 
+  /**
+   * Возвращает учётные данные администратора только в development-окружении.
+   * В production эндпоинт заблокирован во избежание утечки паролей.
+   */
   getAdminCredentialsHint(): { login: string; password: string } {
+    if (!DEMO_ALLOWED) {
+      throw new ForbiddenException(
+        'Admin credentials hint is unavailable in production',
+      );
+    }
+
     return {
       login: 'admin',
       password: 'admin',
     };
   }
 
+  /**
+   * Возвращает список демо-аккаунтов только в development-окружении.
+   * В production эндпоинт заблокирован во избежание утечки паролей.
+   */
   getDemoAccounts(): Array<{
     login: string;
     password: string;
     role: UserRole;
   }> {
+    if (!DEMO_ALLOWED) {
+      throw new ForbiddenException(
+        'Demo accounts are unavailable in production',
+      );
+    }
+
     return [
       { login: 'admin', password: 'admin', role: UserRole.Admin },
       { login: 'master', password: 'master', role: UserRole.HookahMaster },

@@ -4,10 +4,8 @@ import {
   IsArray,
   IsEnum,
   IsInt,
-  IsNumber,
   IsOptional,
   IsString,
-  Max,
   Min,
   MinLength,
   ValidateNested,
@@ -17,18 +15,7 @@ import {
   HeatingSystemType,
   PackingStyle,
 } from '../../platform/platform.models';
-
-class BlendComponentDto {
-  @ApiProperty({ example: 'uuid-tobacco-1' })
-  @IsString()
-  tobaccoId!: string;
-
-  @ApiProperty({ example: 70 })
-  @IsNumber()
-  @Min(1)
-  @Max(100)
-  percentage!: number;
-}
+import { BlendComponentDto, IsBlendPercentageSumValid } from './shared.dto';
 
 class ActualSetupDto {
   @ApiProperty({ enum: HeatingSystemType, example: HeatingSystemType.Coal })
@@ -91,11 +78,15 @@ class ActualSetupDto {
 export class FulfillOrderDto {
   @ApiProperty({
     type: [BlendComponentDto],
+    description: 'Компоненты фактического бленда (сумма процентов = 100)',
   })
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => BlendComponentDto)
+  @IsBlendPercentageSumValid({
+    message: 'Сумма процентов фактического бленда должна равняться 100',
+  })
   actualBlend!: BlendComponentDto[];
 
   @ApiProperty({

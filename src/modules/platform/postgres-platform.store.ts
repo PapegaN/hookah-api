@@ -336,18 +336,66 @@ export class PostgresPlatformStore {
     return this.loadOrders(orderResult.rows.map((row) => row.id as string));
   }
 
+  /**
+   * Загружает конкретный заказ по ID вместо загрузки всех заказов пользователя.
+   * Предыдущая реализация вызывала listOrdersForUser, которая загружала ВСЕ
+   * заказы, а затем фильтровала по ID в памяти — O(n) вместо O(1).
+   */
   async getOrderById(
     orderId: string,
     currentUser: AppUser,
   ): Promise<OrderView> {
-    const orders = await this.listOrdersForUser(currentUser);
-    const order = orders.find((item) => item.id === orderId);
+    // Проверяем доступ пользователя к заказу
+    const canAccess = await this.canUserAccessOrder(orderId, currentUser);
 
-    if (!order) {
+    if (!canAccess) {
       throw new NotFoundException('Order not found');
     }
 
-    return order;
+    const orders = await this.loadOrders([orderId]);
+
+    if (orders.length === 0) {
+      throw new NotFoundException('Order not found');
+    }
+
+    // loadOrders всегда возвращает хотя бы один заказ для существующего orderId
+    return orders[0]!;
+  }
+
+  /**
+   * Проверяет, имеет ли пользователь доступ к заказу.
+   * Клиент видит только свои заказы, персонал — все заказы.
+   */
+  private async canUserAccessOrder(
+    orderId: string,
+    currentUser: AppUser,
+  ): Promise<boolean> {
+    if (!currentUser.isApproved) {
+      return false;
+    }
+
+    if (currentUser.role !== UserRole.Client) {
+      // Персонал (admin, hookahMaster) видит все заказы
+      const orderExists = await this.databaseService.query(
+        `select 1 from sales.orders where id = $1 limit 1`,
+        [orderId],
+      );
+      return orderExists.rows.length > 0;
+    }
+
+    // Клиент видит только заказы, в которых он участвует
+    const participantCheck = await this.databaseService.query(
+      `
+        select 1
+        from sales.order_participants participant
+        where participant.order_id = $1
+          and participant.client_user_id = $2
+        limit 1
+      `,
+      [orderId, currentUser.id],
+    );
+
+    return participantCheck.rows.length > 0;
   }
 
   async createOrder(

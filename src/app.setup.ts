@@ -7,11 +7,24 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 const appVersion = process.env.npm_package_version ?? '0.1.0';
 
-function resolveAllowedOrigins(): true | string[] {
+/**
+ * Разреляет CORS-origins только из переменной окружения APP_ORIGIN.
+ * В production-окружении отсутствие явного APP_ORIGIN считается
+ * ошибкой конфигурации — wildcard больше не разрешается.
+ */
+function resolveAllowedOrigins(): string[] {
   const rawOrigins = process.env.APP_ORIGIN;
 
+  // В development разрешаем любые origin для удобства локальной разработки
+  if (process.env.NODE_ENV !== 'production') {
+    return ['*'];
+  }
+
+  // В production требуем явного указания хотя бы одного origin
   if (!rawOrigins) {
-    return true;
+    throw new Error(
+      'APP_ORIGIN environment variable must be set in production to configure CORS allowed origins',
+    );
   }
 
   const origins = rawOrigins
@@ -19,7 +32,13 @@ function resolveAllowedOrigins(): true | string[] {
     .map((origin) => origin.trim())
     .filter((origin) => origin.length > 0);
 
-  return origins.length > 0 ? origins : true;
+  if (origins.length === 0) {
+    throw new Error(
+      'APP_ORIGIN environment variable must contain at least one valid origin in production',
+    );
+  }
+
+  return origins;
 }
 
 export function configureApp(app: INestApplication): void {
@@ -29,8 +48,11 @@ export function configureApp(app: INestApplication): void {
     defaultVersion: '1',
   });
 
+  // В production resolveAllowedOrigins() выбросит ошибку, если APP_ORIGIN не задан
+  const allowedOrigins = resolveAllowedOrigins();
+
   app.enableCors({
-    origin: resolveAllowedOrigins(),
+    origin: allowedOrigins,
     credentials: true,
   });
 

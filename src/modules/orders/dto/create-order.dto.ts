@@ -2,13 +2,11 @@ import { ApiProperty } from '@nestjs/swagger';
 import {
   ArrayMinSize,
   IsArray,
+  IsBoolean,
   IsEnum,
   IsInt,
-  IsNumber,
-  IsBoolean,
   IsOptional,
   IsString,
-  Max,
   Min,
   MinLength,
   ValidateNested,
@@ -18,18 +16,7 @@ import {
   HeatingSystemType,
   PackingStyle,
 } from '../../platform/platform.models';
-
-class BlendComponentDto {
-  @ApiProperty({ example: 'uuid-tobacco-1' })
-  @IsString()
-  tobaccoId!: string;
-
-  @ApiProperty({ example: 60 })
-  @IsNumber()
-  @Min(1)
-  @Max(100)
-  percentage!: number;
-}
+import { BlendComponentDto, IsBlendPercentageSumValid } from './shared.dto';
 
 class RequestedSetupDto {
   @ApiProperty({ enum: HeatingSystemType, example: HeatingSystemType.Coal })
@@ -107,11 +94,15 @@ export class CreateOrderDto {
 
   @ApiProperty({
     type: [BlendComponentDto],
+    description: 'Компоненты запрошенного бленда (сумма процентов = 100)',
   })
   @IsArray()
   @ArrayMinSize(1)
   @ValidateNested({ each: true })
   @Type(() => BlendComponentDto)
+  @IsBlendPercentageSumValid({
+    message: 'Сумма процентов запрошенного бленда должна равняться 100',
+  })
   requestedBlend!: BlendComponentDto[];
 
   @ApiProperty({
