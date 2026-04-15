@@ -187,7 +187,7 @@ export class PublicForumController {
       },
       {
         key: 'electric_heads',
-        title: 'Электро чаши',
+        title: 'Электрочаши',
         description:
           'Альтернативные электрические решения и опыт эксплуатации без угля.',
       },
@@ -233,13 +233,13 @@ export class PublicForumController {
         },
         { label: 'Яркость', value: `${item.brightnessLevel}/5` },
         {
-          label: 'Теги',
+          label: 'Теги вкуса',
           value:
             item.flavorTags.map((tag) => tag.name).join(', ') ||
             'Пока не заданы',
         },
         {
-          label: 'Наличие в каталоге',
+          label: 'Наличие',
           value: item.inStock ? 'В наличии' : 'Нет в наличии',
         },
       ],
@@ -377,7 +377,7 @@ export class PublicForumController {
         id: `${item.id}-comment-2`,
         authorName: 'BowlTheory',
         createdAt: '2026-04-12T21:05:00.000Z',
-        text: `Для MVP форума карточка уже полезная: есть параметры и есть от чего оттолкнуться в обсуждении. Дальше бы ещё добавить сравнения с похожими моделями.`,
+        text: `Для текущего этапа форум уже полезен: есть параметры и есть от чего оттолкнуться в обсуждении. Следующим шагом хочется видеть сравнения с похожими моделями.`,
       },
     ];
   }
@@ -397,7 +397,7 @@ export class PublicForumController {
         authorName: 'TableSeven',
         createdAt: '2026-04-13T16:40:00.000Z',
         rating: Math.min(5, Math.max(3, Math.round(item.ratingAverage + 0.4))),
-        text: `Подробный отзыв по ${item.title}: понравился общий баланс, но нюансы сильно зависят от сетапа и сценария. Для форума это как раз хороший кандидат на длинное обсуждение с фото.`,
+        text: `Подробный отзыв по ${item.title}: понравился общий баланс, но нюансы сильно зависят от сетапа и сценария. Для форума это хороший кандидат на длинное обсуждение с фото и сравнением разных подходов.`,
         photoUrls: [],
       },
     ];

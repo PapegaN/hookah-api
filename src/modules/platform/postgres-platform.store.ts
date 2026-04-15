@@ -514,7 +514,7 @@ export class PostgresPlatformStore {
               existingOrderId,
               OrderTimelineEventType.ParticipantJoined,
               clientUserId,
-              `${client.login} ������������� � ������ ����� ${tableLabel}.`,
+              `${client.login} присоединился к заказу стола ${tableLabel}.`,
             ],
           );
 
@@ -615,7 +615,7 @@ export class PostgresPlatformStore {
             OrderTimelineEventType.Created,
             OrderStatus.New,
             clientUserId,
-            `${client.login} ������ ����� ��� ����� ${tableLabel}.`,
+            `${client.login} создал заказ для стола ${tableLabel}.`,
           ],
         );
 
@@ -695,7 +695,7 @@ export class PostgresPlatformStore {
           orderId,
           OrderTimelineEventType.ParticipantTableApproved,
           actorUserId,
-          `${client.login} ����������� �� ${await this.getOrderTableLabel(
+          `${client.login} подтверждён за столом ${await this.getOrderTableLabel(
             orderId,
             transaction,
           )}.`,
@@ -749,7 +749,7 @@ export class PostgresPlatformStore {
           OrderTimelineEventType.Started,
           OrderStatus.InProgress,
           actorUserId,
-          `����� ��� ${order.tableLabel} ���� � ������.`,
+          `Заказ для ${order.tableLabel} взят в работу.`,
         ],
       );
     });
@@ -859,7 +859,7 @@ export class PostgresPlatformStore {
           OrderTimelineEventType.Delivered,
           OrderStatus.ReadyForFeedback,
           actorUserId,
-          `����� ��� ${order.tableLabel} ����� ��������.`,
+          `Заказ для ${order.tableLabel} передан гостям.`,
         ],
       );
     });
@@ -995,7 +995,7 @@ export class PostgresPlatformStore {
           OrderTimelineEventType.FeedbackReceived,
           nextStatus,
           actor.id,
-          `${actor.login} ������� ����� �� ������ ${order.tableLabel}.`,
+          `${actor.login} оставил отзыв по заказу ${order.tableLabel}.`,
         ],
       );
     });
@@ -1924,7 +1924,7 @@ export class PostgresPlatformStore {
 
       return {
         id: row.id as string,
-        tableLabel: (row.table_label as string) ?? '���� ��� ������',
+        tableLabel: (row.table_label as string) ?? 'Стол без названия',
         status: row.status as OrderStatus,
         createdAt: this.toIsoString(row.created_at),
         updatedAt: this.toIsoString(row.updated_at),
@@ -2150,7 +2150,8 @@ export class PostgresPlatformStore {
           manufacturer.name as manufacturer,
           hookah.name,
           hookah.inner_diameter_mm,
-          hookah.has_diffuser
+          hookah.has_diffuser,
+          hookah.is_active
         from equipment.hookahs hookah
         join equipment.manufacturers manufacturer on manufacturer.id = hookah.manufacturer_id
         order by manufacturer.name asc, hookah.name asc
@@ -2163,7 +2164,7 @@ export class PostgresPlatformStore {
       name: row.name as string,
       innerDiameterMm: Number(row.inner_diameter_mm),
       hasDiffuser: Boolean(row.has_diffuser),
-      isActive: true,
+      isActive: Boolean(row.is_active),
     }));
   }
 
@@ -2176,7 +2177,8 @@ export class PostgresPlatformStore {
           bowl.name,
           bowl.bowl_type::text as bowl_type,
           bowl.material,
-          bowl.capacity_bucket::text as capacity_bucket
+          bowl.capacity_bucket::text as capacity_bucket,
+          bowl.is_active
         from equipment.bowls bowl
         join equipment.manufacturers manufacturer on manufacturer.id = bowl.manufacturer_id
         order by manufacturer.name asc, bowl.name asc
@@ -2190,7 +2192,7 @@ export class PostgresPlatformStore {
       bowlType: row.bowl_type as BowlReference['bowlType'],
       material: (row.material as string | null) ?? undefined,
       capacityBucket: row.capacity_bucket as BowlReference['capacityBucket'],
-      isActive: true,
+      isActive: Boolean(row.is_active),
     }));
   }
 
@@ -2202,7 +2204,8 @@ export class PostgresPlatformStore {
           manufacturer.name as manufacturer,
           kalaud.name,
           kalaud.material,
-          kalaud.color
+          kalaud.color,
+          kalaud.is_active
         from equipment.kalauds kalaud
         join equipment.manufacturers manufacturer on manufacturer.id = kalaud.manufacturer_id
         order by manufacturer.name asc, kalaud.name asc
@@ -2215,7 +2218,7 @@ export class PostgresPlatformStore {
       name: row.name as string,
       material: (row.material as string | null) ?? undefined,
       color: (row.color as string | null) ?? undefined,
-      isActive: true,
+      isActive: Boolean(row.is_active),
     }));
   }
 
@@ -2226,7 +2229,8 @@ export class PostgresPlatformStore {
           charcoal.id::text as id,
           manufacturer.name as manufacturer,
           charcoal.name,
-          charcoal.size_label
+          charcoal.size_label,
+          charcoal.is_active
         from equipment.charcoals charcoal
         join equipment.manufacturers manufacturer on manufacturer.id = charcoal.manufacturer_id
         order by manufacturer.name asc, charcoal.name asc
@@ -2238,7 +2242,7 @@ export class PostgresPlatformStore {
       manufacturer: row.manufacturer as string,
       name: row.name as string,
       sizeLabel: row.size_label as string,
-      isActive: true,
+      isActive: Boolean(row.is_active),
     }));
   }
 
@@ -2248,7 +2252,8 @@ export class PostgresPlatformStore {
         select
           electric_head.id::text as id,
           manufacturer.name as manufacturer,
-          electric_head.name
+          electric_head.name,
+          electric_head.is_active
         from equipment.electric_heads electric_head
         join equipment.manufacturers manufacturer
           on manufacturer.id = electric_head.manufacturer_id
@@ -2260,7 +2265,7 @@ export class PostgresPlatformStore {
       id: row.id as string,
       manufacturer: row.manufacturer as string,
       name: row.name as string,
-      isActive: true,
+      isActive: Boolean(row.is_active),
     }));
   }
 
@@ -2336,8 +2341,8 @@ export class PostgresPlatformStore {
       `
         insert into equipment.manufacturers (code, name)
         values ($1, $2)
-        on conflict (code) do update
-        set name = excluded.name
+        on conflict (name) do update
+        set code = excluded.code
         returning id::text as id
       `,
       [
@@ -2561,7 +2566,7 @@ export class PostgresPlatformStore {
     }
 
     return {
-      tableLabel: (row.table_label as string) ?? '���� ��� ������',
+      tableLabel: (row.table_label as string) ?? 'Стол без названия',
       status: row.status as OrderStatus,
     };
   }
