@@ -421,6 +421,7 @@ export class PostgresPlatformStore {
     const requestedBlend = await this.validateBlendSelection(
       input.requestedBlend,
       'requested blend',
+      3,
     );
     const requestedSetup = await this.validateOrderSetupInput(
       input.requestedSetup,
@@ -774,6 +775,7 @@ export class PostgresPlatformStore {
     const actualBlend = await this.validateBlendSelection(
       input.actualBlend,
       'actual packing',
+      10,
     );
     const actualSetup = await this.validateOrderSetupInput(
       input.actualSetup,
@@ -2485,6 +2487,7 @@ export class PostgresPlatformStore {
   private async validateBlendSelection(
     blend: Array<{ tobaccoId: string; percentage: number }>,
     label: string,
+    maxTobaccos = 3,
   ): Promise<Array<{ tobaccoId: string; percentage: number }>> {
     if (!Array.isArray(blend)) {
       throw new BadRequestException(`${label} should be an array`);
@@ -2501,9 +2504,9 @@ export class PostgresPlatformStore {
       ...new Set(normalizedBlend.map((entry) => entry.tobaccoId)),
     ];
 
-    if (uniqueIds.length === 0 || uniqueIds.length > 3) {
+    if (uniqueIds.length === 0 || uniqueIds.length > maxTobaccos) {
       throw new BadRequestException(
-        `${label} should contain from 1 to 3 tobaccos`,
+        `${label} should contain from 1 to ${maxTobaccos} tobaccos`,
       );
     }
 

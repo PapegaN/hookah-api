@@ -362,6 +362,7 @@ export class MemoryPlatformStore {
       requestedBlend: this.validateBlendSelection(
         input.requestedBlend,
         'requested blend',
+        3,
       ),
       wantsCooling: input.wantsCooling,
       wantsMint: input.wantsMint,
@@ -457,6 +458,7 @@ export class MemoryPlatformStore {
     order.actualBlend = this.validateBlendSelection(
       input.actualBlend,
       'actual blend',
+      10,
     );
     order.actualSetup = this.resolveSetupView(input.actualSetup);
     order.packingComment = this.normalizeOptionalValue(input.packingComment);
@@ -1031,10 +1033,15 @@ export class MemoryPlatformStore {
   private validateBlendSelection(
     blend: BlendComponentInput[],
     label: string,
+    maxTobaccos = 3,
   ): BlendComponentInput[] {
-    if (!Array.isArray(blend) || blend.length === 0 || blend.length > 3)
+    if (
+      !Array.isArray(blend) ||
+      blend.length === 0 ||
+      blend.length > maxTobaccos
+    )
       throw new BadRequestException(
-        `${label} should contain from 1 to 3 tobaccos`,
+        `${label} should contain from 1 to ${maxTobaccos} tobaccos`,
       );
     const total = blend.reduce((sum, entry) => sum + entry.percentage, 0);
     if (Math.abs(total - 100) > 0.001)

@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 import {
   ArrayMinSize,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsEnum,
@@ -98,6 +99,7 @@ export class CreateOrderDto {
   })
   @IsArray()
   @ArrayMinSize(1)
+  @ArrayMaxSize(3)
   @ValidateNested({ each: true })
   @Type(() => BlendComponentDto)
   @IsBlendPercentageSumValid({
